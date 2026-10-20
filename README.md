@@ -1057,3 +1057,13 @@ metric handling, including a regression check that outside detections cannot
 affect extent-only precision or recall. Implementation uses the documented
 [Pyogrio layer reader](https://pyogrio.readthedocs.io/en/latest/introduction.html)
 and [Shapely geometry transformation](https://shapely.readthedocs.io/en/stable/reference/shapely.transform.html).
+
+## License
+
+The code and documentation text are licensed under the
+[Apache License 2.0](LICENSE). The license does not cover:
+
+- `docs/images/`: figures cut from `Tanks.tif`. The imagery's own terms apply.
+- Model weights, which this repository does not include. Qwen3-VL is
+  Apache 2.0; the Nemotron and SAM 3 checkpoints have their own licenses. See
+  each model card.
