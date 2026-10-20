@@ -1,5 +1,66 @@
 # Where Is Jev?
 
+Plain-HTML project overview with figures, for readers new to the project:
+[`docs/index.html`](docs/index.html).
+
+## SAM 3 "round storage tanks" after the Qwen3-VL 4B gate (2026-10-20)
+
+Same pipeline as the Qwen3-VL 32B run in the next section: the same 736 tiles
+of 512 pixels, the same SAM 3 prompt, settings and mask suppression, on all
+four gc1 GPUs. Only the gate changed: the completed Qwen3-VL 4B decisions from
+the multi-size run (not re-run) routed **246 tiles** (221 contains, 25 partial).
+237 of them were also routed by 32B; 28 were routed only by 32B and 9 only by
+4B. SAM 3 workers processed 61–62 tiles each and found **800 raw instances**.
+Mask suppression kept **248**, 29 of them touching a tile edge.
+
+| Seconds, gc1 (4 × RTX PRO 6000 Blackwell) | Qwen 4B gate | Qwen 32B gate |
+|---|---:|---:|
+| Qwen decisions, 736 tiles (earlier run, startup included) | 11.3 | 31.2 |
+| Gate: routing, CSV/GeoJSON, overview images | 1.2 | 1.2 |
+| SAM 3 workers + merge, startup through exit | 12 | 15 (box-NMS merge) |
+| Longest SAM 3 worker: inference and patch outputs / model load | 6.39 / 1.23 | 7.29 / 1.20 |
+
+Single runs; launcher wall time has one-second resolution. Peak GPU memory
+was 19.0 GiB per worker.
+
+Evaluation, same rules as below: only labels and detections whose centroids
+lie inside `Extent` (85 labels; 220 of the 248 detections here). Nothing was
+tuned against the labels. Both rows use mask suppression.
+
+| Gate | Tiles | Raw → kept | Evaluated | TP / FP / FN at IoU ≥ 0.50 | Precision | Recall | F1 | F1, any overlap |
+|---|---:|---:|---:|---|---:|---:|---:|---:|
+| Qwen3-VL 4B | 246 | 800 → 248 | 220 | 81 / 139 / 4 | 36.8% | 95.3% | 53.1% | 55.7% |
+| Qwen3-VL 32B | 265 | 850 → 251 | 224 | 82 / 142 / 3 | 36.6% | 96.5% | 53.1% | 55.0% |
+
+The two gates give the same F1 to three digits. Every labeled tank overlaps a
+detection in both runs. The 4B run misses one more tank at IoU 0.50, OBJECTID
+48 (best IoU 0.368, versus 0.516 after the 32B gate), alongside 83, 101 and
+106. One image and one run each; this does not rank the two gates. End to end
+on the same host, the 4B path took about 25 s versus 47 s, mostly from the
+faster decisions (11.3 s versus 31.2 s).
+
+Output for ArcGIS Pro:
+`~/Documents/ArcGIS/Projects/Tanks/tank_detections_sam3_round_qwen4b_512.gpkg`,
+with the same six layers and fields as the 32B package described below
+(`gate_tiles` 246, `raw_detections` 800, `detections` 248,
+`evaluated_detections` 220, `evaluated_tanks` 85, `extent` 1). Local records:
+`results/sam3_gate512_qwen4b/`, `results/sam3_round_qwen4b_512/`,
+`results/sam3_round_qwen4b_validation/`.
+
+```bash
+# gc1, inside tmux:
+.venv/bin/python patch_decisions.py gate --manifest results/tiles_gc1/512/manifest \
+  --shards results/tiles_gc1/512/qwen4b --out results/sam3_gate512_qwen4b
+bash run_gc1.sh 32 results/sam3_round_qwen4b_512 results/sam3_gate512_qwen4b "round storage tanks"
+# Locally, after copying both folders back:
+T=~/Documents/ArcGIS/Projects/Tanks R=results/sam3_round_qwen4b_512 V=results/sam3_round_qwen4b_validation
+.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged/detections.geojson --image $T/Tanks.tif --out $V
+.venv/bin/python to_gpkg.py $R/tank_detections_sam3_round_qwen4b_512.gpkg \
+  detections=$R/merged/detections.geojson raw_detections=$R/merged/raw_detections.geojson \
+  gate_tiles=results/sam3_gate512_qwen4b/patches.geojson evaluated_detections=$V/predictions.geojson \
+  evaluated_tanks=$V/ground_truth.geojson extent=$V/extent.geojson
+```
+
 ## SAM 3 "round storage tanks" after the Qwen3-VL 32B gate (2026-10-20)
 
 Two stages on `Tanks.tif`, 512-pixel tiles with 50% overlap (736 tiles):
@@ -71,17 +132,88 @@ twice their area, 17 of them clear of any tile edge (nested rings, roof parts
 or distinct objects under a large mask; not reviewed). A larger false mask can
 hide a real tank this way, though no labeled tank lost its overlap here.
 
-Output for ArcGIS Pro (EPSG:4326, spatially indexed):
-`~/Documents/ArcGIS/Projects/Tanks/tank_detections_sam3_round_qwen32b_512_ios.gpkg`
+Figures from `figures.py` (Qwen3-VL 32B gate, mask suppression). Example tiles
+are chosen by fixed rules, not by hand.
 
-- `detections`: 251 instances after mask suppression (`score`, `patch`, `touches_patch_edge`, `pixel_box`).
-- `raw_detections`: all 850 worker instances before suppression.
-- `gate_tiles`: the 265 routed tiles with Qwen's `decision` and `margin`.
-- `evaluated_detections`: the 224 detections inside the extent, `status` TP/FP at IoU ≥ 0.50.
-- `evaluated_tanks`: the 85 labels inside the extent with `status` and `best_iou`.
-- `extent`: the evaluation boundary.
+![Gate tiles over the extent](docs/images/gate_tiles.jpg)
+*Tiles sent to SAM 3: green contains, amber partial, yellow `Extent`. Tiles
+decided "no tank" are not drawn.*
 
-Superseded box-NMS package, same layers with 364 / 327 detections:
+![Detections over the extent](docs/images/detections.jpg)
+*Detections: green TP, magenta FP, grey not scored (centroid outside
+`Extent`), red outline missed label. SAM 3 splits the two largest roofs into
+parts; one part matches and the others count as FPs.*
+
+![Tile with the most true positives](docs/images/example_most_tp.jpg)
+*Tile with the most TPs (`p50_0591`): 45 raw masks from overlapping tiles are
+centred in it (left); 10 TP and 1 FP remain after suppression (right).*
+
+![Tile with the most false positives](docs/images/example_most_fp.jpg)
+*Tile with the most FPs (`p50_0166`): 40 small round objects in rows that have
+no `Tanks` labels; not examined.*
+
+![Partial tile](docs/images/example_partial.jpg)
+*Partial tile with the most raw masks (`p50_0358`): both tanks cut by the tile
+edge match a label; one FP covers a dark area beside the lower tank.*
+
+![Missed tanks](docs/images/missed_tanks.jpg)
+*The three labels missed at IoU 0.50 (red). For 83 and 101 the mask also
+covers the tank wall that the oblique view shows; the label outlines the roof.*
+
+Output for ArcGIS Pro:
+`~/Documents/ArcGIS/Projects/Tanks/tank_detections_sam3_round_qwen32b_512_ios.gpkg`.
+Six spatially indexed layers in EPSG:4326, listed in pipeline order:
+
+1. **`gate_tiles`** (265 polygons): the 512 px tiles Qwen3-VL 32B routed to
+   SAM 3. They overlap by 50%, so they stack on the map.
+   - `decision`: Qwen's verdict, *Contains a tank* (235) or *Partially
+     contains a tank* (30). Tiles decided *no tank* are not in the layer.
+   - `margin`: weight(A) + weight(B) − weight(C), uncalibrated; a ranking only.
+   - `x`, `y`, `width`, `height`: the tile window in `Tanks.tif` pixels.
+   - `valid_fraction`: share of the tile that is image, not nodata.
+   - `answer`, `run_detector`, `status`: fields `detect.py`'s screen-folder
+     input requires; constant here.
+2. **`raw_detections`** (850 multipolygons): every SAM 3 mask from every tile,
+   before duplicate suppression. Each spot is covered by up to four tiles, so
+   one tank usually appears 2–4 times. Same fields as `detections`.
+3. **`detections`** (251 multipolygons): the result after mask suppression;
+   use this layer as the inventory.
+   - `score`: SAM 3 confidence (threshold 0.3).
+   - `patch`: the tile the mask came from (`gate_tiles.id`).
+   - `touches_patch_edge`: the mask touches its tile border and may be cut
+     off; 28 of 251. Suppression ranks these last.
+   - `pixel_box`: mask bounding box in `Tanks.tif` pixels (x1, y1, x2, y2).
+   - `screen_margin`, `screen_routed`: copied from the tile's gate row.
+4. **`evaluated_detections`** (224 multipolygons): the detections whose
+   original centroid lies inside `Extent`, scored against the labels; the
+   other 27 are ignored. `id` is the 0-based feature order in `detections`
+   (GeoPackage `fid` − 1).
+   - `status`: TP (82) matches a labeled tank at IoU ≥ 0.50; FP (142) does not.
+   - `matched_truth_id`: the matched tank, joins to `evaluated_tanks.id`.
+   - `matched_iou`, `best_iou`: IoU with the matched tank, and the best IoU
+     with any tank. A high `best_iou` on an FP means a higher-scoring
+     detection already took that tank.
+   - `boundary_clipped`, `retained_fraction`, `centroid_in_extent`: 3
+     detections cross the `Extent` boundary; they are clipped to it, and
+     `retained_fraction` is the area kept.
+5. **`evaluated_tanks`** (85 polygons): the `Tanks` labels whose centroid lies
+   inside `Extent` (12 outside are ignored). `id` is the `Tanks` OBJECTID.
+   - `status`: matched (82) or FN (3: OBJECTIDs 83, 101, 106).
+   - `matched_prediction_id`: the matching detection, joins to
+     `evaluated_detections.id`.
+   - `best_iou`: the closest shape match to any detection.
+   - `any_overlap`: True for all 85. The 3 FNs overlap a detection but fail
+     the IoU 0.50 shape test.
+   - `boundary_clipped`, `retained_fraction`, `centroid_in_extent`: as above
+     (3 labels cross the boundary).
+6. **`extent`** (1 polygon): the evaluation boundary from `Tanks.gdb`.
+
+Suggested view: symbolize `evaluated_detections` and `evaluated_tanks` by
+`status`, add a definition query `status = 'FN'` on `evaluated_tanks` to find
+the three misses, draw `raw_detections` under `detections` to see what
+suppression removed, and outline `extent` on top.
+
+Superseded box-NMS package, same layers and fields with 364 / 327 detections:
 `tank_detections_sam3_round_qwen32b_512.gpkg` in the same folder.
 
 Local records: `results/sam3_gate512_qwen32b/`, `results/sam3_round_qwen32b_512/`
@@ -105,6 +237,9 @@ T=~/Documents/ArcGIS/Projects/Tanks R=results/sam3_round_qwen32b_512 V=results/s
   detections=$R/merged_ios/detections.geojson raw_detections=$R/merged_ios/raw_detections.geojson \
   gate_tiles=results/sam3_gate512_qwen32b/patches.geojson evaluated_detections=$V/predictions.geojson \
   evaluated_tanks=$V/ground_truth.geojson extent=$V/extent.geojson
+# figures.py needs an empty --out; copy the result over docs/images/ to update the docs.
+.venv/bin/python figures.py --image $T/Tanks.tif --gate results/sam3_gate512_qwen32b \
+  --merged $R/merged_ios --validation $V --out results/figures_qwen32b_512
 ```
 
 ## Multi-size tiles on Tanks.tif (2026-10-20)

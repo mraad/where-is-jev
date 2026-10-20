@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Where Is Jev</title>
+<style>
+  body { max-width: 880px; margin: 0 auto; padding: 16px; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1a1a1a; background: #ffffff; }
+  h1 { font-size: 1.7em; margin-bottom: 0.2em; }
+  h2 { margin-top: 2.2em; padding-bottom: 0.2em; border-bottom: 1px solid #d0d0d0; }
+  h3 { margin-top: 1.6em; }
+  figure { margin: 1.5em 0; }
+  figure img { display: block; width: 100%; max-width: 720px; height: auto; border: 1px solid #c8c8c8; }
+  figcaption { max-width: 720px; margin-top: 0.4em; font-size: 0.9em; color: #444444; }
+  .table { overflow-x: auto; }
+  table { border-collapse: collapse; margin: 1em 0; font-size: 0.92em; }
+  th, td { border: 1px solid #c8c8c8; padding: 4px 8px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; }
+  td.n, th.n { text-align: right; white-space: nowrap; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+  pre { padding: 8px 10px; background: #f4f4f4; overflow-x: auto; }
+  pre.wrap { white-space: pre-wrap; }
+  .note { margin: 1em 0; padding: 6px 12px; border-left: 4px solid #d99a00; background: #fff8e0; }
+  .subtitle { margin-top: 0; color: #555555; }
+</style>
+</head>
+<body>
+
+<h1>Where Is Jev?</h1>
+<p class="subtitle">Storage tank detection in one aerial image with pretrained models and no task training</p>
+
+<nav>
+  <ol>
+    <li><a href="#summary">Summary</a></li>
+    <li><a href="#data">Data</a></li>
+    <li><a href="#method">Method</a></li>
+    <li><a href="#decisions">Tile decisions</a></li>
+    <li><a href="#detections">Detections</a></li>
+    <li><a href="#examples">Example tiles</a></li>
+    <li><a href="#limits">Limits</a></li>
+    <li><a href="#procedure">Procedure</a></li>
+    <li><a href="#output">Output</a></li>
+    <li><a href="#files">Files</a></li>
+    <li><a href="#terms">Terms</a></li>
+  </ol>
+</nav>
+
+<h2 id="summary">1. Summary</h2>
+<p>This project finds storage tanks in one aerial image. It uses pretrained models only. It does not train a model for this task.</p>
+<p>The method has two stages:</p>
+<ol>
+  <li>A vision-language model (VLM) makes a decision for each tile. The decision is one of three: the tile contains a tank, contains part of a tank, or contains no tank. This stage is the gate.</li>
+  <li>SAM 3 makes detections in the tiles that contain all or part of a tank.</li>
+</ol>
+<p>The project compares the detections with the labels in the <code>Tanks</code> layer. Each stage that uses a model runs on all GPUs of one host at the same time.</p>
+<p>Results with the Qwen3-VL 32B gate (section 5 gives all values):</p>
+<ul>
+  <li>SAM 3 matches 82 of 85 labels at IoU 0.5 or more (recall 96.5%). All 85 labels touch a detection.</li>
+  <li>Precision is 36.6%. 132 of the 142 false positives do not touch a label. Many of them are small round objects. Nobody examined these objects.</li>
+  <li>The full run takes approximately 47 s on four GPUs. With the Qwen3-VL 4B gate, it takes approximately 25 s, with the same F1 (53.1%).</li>
+</ul>
+
+<h2 id="data">2. Data</h2>
+<div class="table"><table>
+  <tr><th>Item</th><th>Value</th></tr>
+  <tr><td>Image</td><td><code>Tanks.tif</code>: 8,200 × 6,087 pixels, 3 bands (RGB), 0.5 m pixel size, EPSG:3857</td></tr>
+  <tr><td>Labels</td><td><code>Tanks</code> layer in <code>Tanks.gdb</code>: 97 polygons</td></tr>
+  <tr><td>Extent</td><td><code>Extent</code> layer in <code>Tanks.gdb</code>: 1 rectangle, 82% of the image</td></tr>
+  <tr><td>Labels inside the extent</td><td>85</td></tr>
+</table></div>
+<p>The project reads the image and the geodatabase. It does not change them. The models get bands 1, 2 and 3 only.</p>
+
+<h2 id="method">3. Method</h2>
+<ol>
+  <li><strong>Tiles.</strong> <code>patch_decisions.py prepare</code> divides the image into tiles of 512 × 512 pixels. The stride is 256 pixels, so adjacent tiles overlap by 50%. The image gives 736 tiles. One point on the ground is in a maximum of four tiles.</li>
+  <li><strong>Gate.</strong> The VLM gets one tile and one fixed question (below). The question has three answers: A, B and C. The decision is the letter with the highest next-token score. Qwen3-VL uses one forward pass (transformers). Nemotron uses one constrained greedy token (vLLM). No classifier head is trained.</li>
+  <li><strong>Detection.</strong> <code>patch_decisions.py gate</code> sends the tiles with decision A or B to SAM 3. SAM 3 gets the text prompt “round storage tanks”. It gives a mask and a score for each object. <code>detect.py</code> uses a score threshold of 0.3. It converts each mask to a polygon. This polygon is a detection.</li>
+  <li><strong>Suppression.</strong> Overlapping tiles give the same tank more than once. <code>merge_shards.py</code> collects the detections from all tiles and sorts them. Detections that do not touch a tile edge come first, then detections with a higher score. The merge removes a detection when its intersection with a kept detection is more than half of the smaller area.</li>
+  <li><strong>Evaluation.</strong> <code>evaluate.py</code> uses only the labels and detections that have a centroid inside the extent. It matches each detection to a maximum of one label, in score order. A match needs an IoU of 0.5 or more. Areas use UTM zone 37N (EPSG:32637).</li>
+  <li><strong>Package.</strong> <code>to_gpkg.py</code> writes the layers to one GeoPackage for ArcGIS Pro.</li>
+</ol>
+<p>Each model stage starts one model copy on each GPU. Each copy processes every <var>n</var>-th tile (<code>rows[i::n]</code>). The merge makes sure that each tile was processed exactly once.</p>
+
+<h3>Gate question</h3>
+<pre class="wrap">Classify this RGB overhead satellite image patch for circular industrial storage tanks.
+A: Contains at least one complete storage tank whose full circular footprint is visible inside the patch.
+B: Contains part of one or more storage tanks cut off by a patch edge or gray missing-image area, but no complete tank.
+C: Contains no visible storage tank, either complete or partial.
+If both complete and partial tanks appear, choose A. There may be one tank or many.
+Partial means spatially cut off, not uncertain. Roads, factory roofs, ships, ponds, and bare ground are not storage tanks.
+Gray regions are missing image data. Judge visible evidence only.
+Answer with exactly one letter: A, B, or C.</pre>
+
+<h3>Models and hosts</h3>
+<div class="table"><table>
+  <tr><th>Role</th><th>Checkpoint</th><th>Revision</th><th>Host</th></tr>
+  <tr><td>Gate</td><td>Qwen/Qwen3-VL-4B-Instruct</td><td><code>ebb281ec</code></td><td>gc1</td></tr>
+  <tr><td>Gate</td><td>Qwen/Qwen3-VL-32B-Instruct</td><td><code>0cfaf481</code></td><td>gc1</td></tr>
+  <tr><td>Gate</td><td>nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16</td><td><code>ca9543b1</code></td><td>gc5</td></tr>
+  <tr><td>Gate</td><td>nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16</td><td><code>e5e99324</code></td><td>gc5</td></tr>
+  <tr><td>Detection</td><td>facebook/sam3 (BF16, batch 32, mask threshold 0.5)</td><td><code>3c879f39</code></td><td>gc1</td></tr>
+</table></div>
+<p>gc1 has four NVIDIA RTX PRO 6000 Blackwell GPUs. gc5 has two RTX PRO 6000 GPUs.</p>
+
+<h2 id="decisions">4. Tile decisions</h2>
+<p>The project makes a reference value for each tile from the labels. A tile is “contains” when a label is fully inside the tile. A tile is “partial” when a label overlaps the tile and no label is fully inside. All other tiles are “none”. The project scores only the 513 tiles that are fully inside the extent: 89 contains, 93 partial and 331 none.</p>
+<p>Presence counts contains and partial as positive. Presence values count tiles, not tanks.</p>
+<div class="table"><table>
+  <tr><th>Model (512 px tiles)</th><th>Host, GPUs</th><th class="n">3-class agreement</th><th class="n">Presence precision</th><th class="n">Presence recall</th><th class="n">Presence F1</th><th class="n">Wall time</th></tr>
+  <tr><td>Qwen3-VL 4B</td><td>gc1, 4</td><td class="n">76.2%</td><td class="n">83.2%</td><td class="n">86.8%</td><td class="n">0.849</td><td class="n">11.3 s</td></tr>
+  <tr><td>Qwen3-VL 32B</td><td>gc1, 4</td><td class="n">77.6%</td><td class="n">81.0%</td><td class="n">91.2%</td><td class="n">0.858</td><td class="n">31.2 s</td></tr>
+  <tr><td>Nemotron Nano VL 12B</td><td>gc5, 2</td><td class="n">62.8%</td><td class="n">59.2%</td><td class="n">92.3%</td><td class="n">0.721</td><td class="n">45.2 s</td></tr>
+  <tr><td>Nemotron Omni 30B-A3B</td><td>gc5, 2</td><td class="n">73.5%</td><td class="n">69.9%</td><td class="n">94.5%</td><td class="n">0.804</td><td class="n">47.2 s</td></tr>
+</table></div>
+<p>Wall time starts when the workers start and stops when the last worker stops. It includes the model load. The README gives the same table for 256 px and 384 px tiles.</p>
+
+<figure>
+  <img src="images/gate_tiles.jpg" alt="Aerial image of the extent with the tiles that the Qwen3-VL 32B gate sent to SAM 3, in green and amber outlines.">
+  <figcaption><strong>Figure 1.</strong> Tiles that the Qwen3-VL 32B gate sends to SAM 3, inside the extent (yellow). Green: decision “Contains a tank” (235 tiles in the full image). Amber: decision “Partially contains a tank” (30 tiles). The figure does not show tiles with decision “Does not contain a tank” (471 tiles). The tiles overlap by 50%, so the outlines make a 256-pixel grid.</figcaption>
+</figure>
+
+<h2 id="detections">5. Detections</h2>
+<p>All rows use the same SAM 3 settings. The first two rows use suppression as section 3 gives it. The last row uses the previous merge (box NMS at IoU 0.5) and is kept for comparison.</p>
+<div class="table"><table>
+  <tr><th>Gate</th><th>Merge</th><th class="n">Tiles to SAM 3</th><th class="n">Before → after merge</th><th class="n">Scored</th><th class="n">TP / FP / FN</th><th class="n">Precision</th><th class="n">Recall</th><th class="n">F1</th></tr>
+  <tr><td>Qwen3-VL 4B</td><td>Suppression</td><td class="n">246</td><td class="n">800 → 248</td><td class="n">220</td><td class="n">81 / 139 / 4</td><td class="n">36.8%</td><td class="n">95.3%</td><td class="n">53.1%</td></tr>
+  <tr><td>Qwen3-VL 32B</td><td>Suppression</td><td class="n">265</td><td class="n">850 → 251</td><td class="n">224</td><td class="n">82 / 142 / 3</td><td class="n">36.6%</td><td class="n">96.5%</td><td class="n">53.1%</td></tr>
+  <tr><td>Qwen3-VL 32B</td><td>Box NMS (old)</td><td class="n">265</td><td class="n">850 → 364</td><td class="n">327</td><td class="n">81 / 246 / 4</td><td class="n">24.8%</td><td class="n">95.3%</td><td class="n">39.3%</td></tr>
+</table></div>
+<p>TP, FP and FN use IoU 0.5. “Scored” is the number of detections with a centroid inside the extent.</p>
+
+<div class="table"><table>
+  <tr><th>Time on gc1, 4 GPUs (seconds)</th><th class="n">Qwen3-VL 4B gate</th><th class="n">Qwen3-VL 32B gate</th></tr>
+  <tr><td>Gate decisions, 736 tiles, model load included</td><td class="n">11.3</td><td class="n">31.2</td></tr>
+  <tr><td>Gate folder: selection, CSV, GeoJSON and preview images</td><td class="n">1.2</td><td class="n">1.2</td></tr>
+  <tr><td>SAM 3 and merge, model load included</td><td class="n">12</td><td class="n">15</td></tr>
+  <tr><td>Total</td><td class="n">≈ 25</td><td class="n">≈ 47</td></tr>
+</table></div>
+<p>The SAM 3 time has a resolution of one second. The peak GPU memory of each SAM 3 copy is 19.0 GiB.</p>
+
+<figure>
+  <img src="images/detections.jpg" alt="Aerial image of the extent with detections in green (true positive) and magenta (false positive).">
+  <figcaption><strong>Figure 2.</strong> Detections after suppression, Qwen3-VL 32B gate. Green: true positive. Magenta: false positive. Grey: centroid outside the extent, not scored. Red outline: label without a match. On the two largest tanks (top), SAM 3 divides the roof into parts. One part matches the label. The other parts are false positives.</figcaption>
+</figure>
+
+<h2 id="examples">6. Example tiles</h2>
+<p><code>figures.py</code> selects the example tiles with fixed rules. A person did not select them. Each figure shows one tile. Left: the detections from all tiles before suppression, in cyan. Right: the detections after suppression, with the colors of Figure 2. The numbers count detections with a centroid inside the tile.</p>
+
+<figure>
+  <img src="images/example_most_tp.jpg" alt="Tile p50_0591 with many tank detections before and after suppression.">
+  <figcaption><strong>Figure 3.</strong> Rule: the tile with the most true positives (tile <code>p50_0591</code>). Before suppression, 45 detections have a centroid in this tile, because neighbor tiles find the same tanks. After suppression, 11 remain: 10 true positives and 1 false positive.</figcaption>
+</figure>
+
+<figure>
+  <img src="images/example_most_fp.jpg" alt="Tile p50_0166 with rows of small round objects detected as false positives.">
+  <figcaption><strong>Figure 4.</strong> Rule: the tile with the most false positives (tile <code>p50_0166</code>). SAM 3 detects 40 small round objects in rows. The <code>Tanks</code> layer has no labels for these objects, so they count as false positives. Nobody examined what these objects are.</figcaption>
+</figure>
+
+<figure>
+  <img src="images/example_partial.jpg" alt="Tile p50_0358 with decision partial; tanks cross the tile edges.">
+  <figcaption><strong>Figure 5.</strong> Rule: the tile with decision “Partially contains a tank” that has the most detections before suppression (tile <code>p50_0358</code>). Two tanks cross the tile edge. Both match a label. One false positive covers a dark area next to the tank at the bottom left.</figcaption>
+</figure>
+
+<figure>
+  <img src="images/missed_tanks.jpg" alt="Three labels without a match at IoU 0.5, with the label in red and the nearest detection in magenta.">
+  <figcaption><strong>Figure 6.</strong> The three labels without a match at IoU 0.5. Red: label. For labels 83 and 101, the detection also covers the side wall of the tank, because the view is oblique. The label covers the roof only. For label 106, the detection covers a smaller shape. Each of these labels touches a detection.</figcaption>
+</figure>
+
+<h2 id="limits">7. Limits</h2>
+<p class="note"><strong>NOTE:</strong> The results come from one image and one run for each configuration. They do not rank the models in general.</p>
+<p class="note"><strong>NOTE:</strong> Precision assumes that the <code>Tanks</code> layer has all tanks inside the extent. Figure 4 shows round objects without labels. If some of these objects are tanks, the true precision is higher.</p>
+<p class="note"><strong>NOTE:</strong> Suppression removes a detection that is inside a larger kept detection. A large false detection can remove a correct detection. No label lost its overlap in these runs.</p>
+<p class="note"><strong>NOTE:</strong> Qwen ran on gc1 with four GPUs. Nemotron ran on gc5 with two GPUs and a different runtime. Do not use these times as a controlled speed comparison.</p>
+<p class="note"><strong>NOTE:</strong> The project does not tune a prompt, threshold or weight on the labels.</p>
+
+<h2 id="procedure">8. Procedure</h2>
+<p>Do these steps to repeat the Qwen3-VL 32B run. gc1 must have <code>data/Tanks.tif</code>, the checkpoints in <code>checkpoints/</code> and the <code>.venv</code> environment (see the README). Each command stops if its output exists. Use a new output name for each run.</p>
+<h3>On gc1</h3>
+<ol>
+  <li>Start a tmux session.
+    <pre>tmux new -s where-is-jev</pre></li>
+  <li>Go to the project folder.
+    <pre>cd ~/where-is-jev</pre></li>
+  <li>Run the gate decisions. The launcher runs 256, 384 and 512 px tiles on all GPUs.
+    <pre>bash run_tiles.sh qwen32b</pre></li>
+  <li>Make the gate folder from the 512 px decisions.
+    <pre>.venv/bin/python patch_decisions.py gate --manifest results/tiles/512/manifest \
+  --shards results/tiles/512/qwen32b --out results/gate512_qwen32b</pre></li>
+  <li>Run SAM 3 and the merge on all four GPUs.
+    <pre>bash run_gc1.sh 32 results/sam3_qwen32b_512 results/gate512_qwen32b "round storage tanks"</pre></li>
+  <li>Make sure that the file <code>results/sam3_qwen32b_512/COMPLETE</code> exists.</li>
+</ol>
+<h3>On the local computer</h3>
+<ol start="7">
+  <li>Copy the gate folder and the run folder from gc1.
+    <pre>scp -r gc1:where-is-jev/results/gate512_qwen32b gc1:where-is-jev/results/sam3_qwen32b_512 results/</pre></li>
+  <li>Set the data folder.
+    <pre>T=~/Documents/ArcGIS/Projects/Tanks</pre></li>
+  <li>Evaluate the detections.
+    <pre>.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --image $T/Tanks.tif \
+  --detections results/sam3_qwen32b_512/merged/detections.geojson --out results/sam3_qwen32b_validation</pre></li>
+  <li>Make the GeoPackage.
+    <pre>.venv/bin/python to_gpkg.py results/sam3_qwen32b_512/tank_detections.gpkg \
+  detections=results/sam3_qwen32b_512/merged/detections.geojson \
+  raw_detections=results/sam3_qwen32b_512/merged/raw_detections.geojson \
+  gate_tiles=results/gate512_qwen32b/patches.geojson \
+  evaluated_detections=results/sam3_qwen32b_validation/predictions.geojson \
+  evaluated_tanks=results/sam3_qwen32b_validation/ground_truth.geojson \
+  extent=results/sam3_qwen32b_validation/extent.geojson</pre></li>
+  <li>Make the figures.
+    <pre>.venv/bin/python figures.py --image $T/Tanks.tif --gate results/gate512_qwen32b \
+  --merged results/sam3_qwen32b_512/merged --validation results/sam3_qwen32b_validation --out results/figures</pre></li>
+</ol>
+
+<h2 id="output">9. Output</h2>
+<p>Each run gives one GeoPackage in EPSG:4326 with a spatial index on each layer. The files are in <code>~/Documents/ArcGIS/Projects/Tanks/</code>:</p>
+<ul>
+  <li><code>tank_detections_sam3_round_qwen32b_512_ios.gpkg</code>: Qwen3-VL 32B gate.</li>
+  <li><code>tank_detections_sam3_round_qwen4b_512.gpkg</code>: Qwen3-VL 4B gate.</li>
+</ul>
+<div class="table"><table>
+  <tr><th>Layer</th><th class="n">Features (32B gate)</th><th>Content</th></tr>
+  <tr><td><code>gate_tiles</code></td><td class="n">265</td><td>Tiles sent to SAM 3, with <code>decision</code> and <code>margin</code></td></tr>
+  <tr><td><code>raw_detections</code></td><td class="n">850</td><td>All detections before suppression</td></tr>
+  <tr><td><code>detections</code></td><td class="n">251</td><td>Detections after suppression, with <code>score</code>, <code>patch</code> and <code>touches_patch_edge</code></td></tr>
+  <tr><td><code>evaluated_detections</code></td><td class="n">224</td><td>Scored detections, with <code>status</code> TP or FP and <code>best_iou</code></td></tr>
+  <tr><td><code>evaluated_tanks</code></td><td class="n">85</td><td>Labels inside the extent, with <code>status</code> matched or FN</td></tr>
+  <tr><td><code>extent</code></td><td class="n">1</td><td>Evaluation boundary</td></tr>
+</table></div>
+<p>The README gives each field of each layer.</p>
+
+<h2 id="files">10. Files</h2>
+<div class="table"><table>
+  <tr><th>File</th><th>Function</th></tr>
+  <tr><td><code>patch_decisions.py</code></td><td>Makes tiles (<code>prepare</code>), collects decisions (<code>export</code>) and makes the gate folder (<code>gate</code>)</td></tr>
+  <tr><td><code>decide_qwen.py</code>, <code>decide_nemotron.py</code></td><td>Make the A/B/C decision for each tile on one GPU</td></tr>
+  <tr><td><code>detect.py</code></td><td>Runs SAM 3 on the tiles of one GPU</td></tr>
+  <tr><td><code>merge_shards.py</code></td><td>Checks the tile coverage and removes duplicate detections</td></tr>
+  <tr><td><code>evaluate.py</code></td><td>Matches detections to labels inside the extent</td></tr>
+  <tr><td><code>validate_tiles.py</code></td><td>Scores tile decisions against reference values from the labels</td></tr>
+  <tr><td><code>to_gpkg.py</code></td><td>Writes GeoJSON layers to one GeoPackage</td></tr>
+  <tr><td><code>figures.py</code></td><td>Makes the figures in this document</td></tr>
+  <tr><td><code>run_tiles.sh</code>, <code>run_gc1.sh</code></td><td>Start one worker for each GPU</td></tr>
+</table></div>
+<p><a href="../README.md">README.md</a> is the experiment log. It gives all runs, values and limits.</p>
+
+<h2 id="terms">11. Terms</h2>
+<div class="table"><table>
+  <tr><th>Term</th><th>Meaning in this document</th></tr>
+  <tr><td>Tile</td><td>A square of 512 × 512 image pixels. Adjacent tiles overlap by 50%.</td></tr>
+  <tr><td>Gate</td><td>The stage that selects the tiles for SAM 3 from the VLM decisions.</td></tr>
+  <tr><td>Decision</td><td>The VLM answer for one tile: A (contains a tank), B (contains part of a tank) or C (contains no tank).</td></tr>
+  <tr><td>Detection</td><td>One polygon that SAM 3 makes for one object.</td></tr>
+  <tr><td>Label</td><td>One polygon in the <code>Tanks</code> layer.</td></tr>
+  <tr><td>Extent</td><td>The polygon in the <code>Extent</code> layer. Only labels and detections with a centroid inside it are scored.</td></tr>
+  <tr><td>Suppression</td><td>The removal of duplicate detections after the merge of all tiles.</td></tr>
+  <tr><td>IoU</td><td>Intersection area divided by union area of two polygons.</td></tr>
+  <tr><td>TP, FP, FN</td><td>True positive: a detection with a matched label. False positive: a detection without a matched label. False negative: a label without a matched detection.</td></tr>
+  <tr><td>Presence</td><td>A tile value that is positive for contains and partial.</td></tr>
+</table></div>
+
+</body>
+</html>
