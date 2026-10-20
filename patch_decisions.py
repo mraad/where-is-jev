@@ -1,7 +1,8 @@
-"""Prepare 50%-overlap RGB windows of a chosen size and export three-way visual decisions."""
+"""Prepare 50%-overlap RGB windows of a chosen size; export or gate three-way visual decisions."""
 
 import argparse
 from collections import Counter
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ import rasterio
 from rasterio.windows import Window
 from PIL import Image
 
-from screen import footprint, read_rgb
+from screen import footprint, read_rgb, write_visuals
 
 LABELS = ("Contains a tank", "Partially contains a tank", "Does not contain a tank")
 QUESTION = """Classify this RGB overhead satellite image patch for circular industrial storage tanks.
@@ -142,6 +143,45 @@ def export(manifest, shards, out):
     print(json.dumps({k: v for k, v in summary.items() if k not in ("workers", "source_manifest")}, indent=2))
 
 
+def gate(manifest, shards, out):
+    """Route contains/partial tiles to SAM 3 as a screen-format folder for detect.py --all-valid."""
+    if out.exists() and any(out.iterdir()):
+        raise ValueError("Choose a fresh output directory")
+    features, decisions, summaries = collect(manifest, shards)
+    meta = json.loads((manifest / "manifest.json").read_text())
+    rows, routed = [], []
+    for f in features:
+        p, d = f["properties"], decisions[f["properties"]["id"]]
+        if d["decision"] == LABELS[2]:
+            continue
+        if "candidate_weights" not in d:
+            raise ValueError("Gating needs candidate weights from decide_qwen.py")
+        w = d["candidate_weights"]
+        rows.append(dict(id=p["id"], x=p["x"], y=p["y"], width=p["width"], height=p["height"],
+                         valid_fraction=p["valid_fraction"], margin=w[0]+w[1]-w[2],
+                         answer="yes" if d["decision"] == LABELS[0] else "partial",
+                         decision=d["decision"], run_detector=True, status="scored"))
+        routed.append(dict(f, properties=rows[-1]))
+    if not rows:
+        raise ValueError("No tiles routed")
+    out.mkdir(parents=True, exist_ok=True)
+    with (out / "patches.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    (out / "patches.geojson").write_text(json.dumps(dict(type="FeatureCollection", features=routed)))
+    with rasterio.open(meta["source"]) as src:
+        write_visuals(src, rows, out)
+    summary = dict(source=meta["source"], shape=meta["shape"], rgb_bands=[1, 2, 3],
+                   patch_size=meta["patch_size"], stride=meta["stride"], total_patches=len(features),
+                   routed=len(rows), counts=dict(Counter(r["decision"] for r in rows)),
+                   gate_model=summaries[0]["model"], gate_revision=summaries[0]["revision"],
+                   gate_decisions=str(shards.resolve()),
+                   rule="Route tiles decided contains or partial; margin = weight(A)+weight(B)-weight(C), uncalibrated")
+    (out / "summary.json").write_text(json.dumps(summary, indent=2))
+    print(json.dumps(summary, indent=2))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="action", required=True)
@@ -153,9 +193,15 @@ def main():
     exp.add_argument("--manifest", type=Path, required=True)
     exp.add_argument("--shards", type=Path, required=True)
     exp.add_argument("--out", type=Path, required=True)
+    gat = sub.add_parser("gate")
+    gat.add_argument("--manifest", type=Path, required=True)
+    gat.add_argument("--shards", type=Path, required=True)
+    gat.add_argument("--out", type=Path, required=True)
     a = p.parse_args()
     if a.action == "prepare":
         prepare(a.image, a.out, a.size)
+    elif a.action == "gate":
+        gate(a.manifest, a.shards, a.out)
     else:
         export(a.manifest, a.shards, a.out)
 

@@ -1,5 +1,86 @@
 # Where Is Jev?
 
+## SAM 3 "round storage tanks" after the Qwen3-VL 32B gate (2026-10-20)
+
+Two stages on `Tanks.tif`, 512-pixel tiles with 50% overlap (736 tiles):
+
+1. **Gate.** The completed Qwen3-VL 32B decisions from the multi-size run below
+   (not re-run) route every tile decided *contains* or *partial* to the
+   detector: **265 of 736 tiles** (235 contains, 30 partial).
+   `patch_decisions.py gate` writes them as a screen-format folder, so the
+   existing `detect.py` and `merge_shards.py` run unchanged. Its `margin`
+   column is Qwen's weight(A) + weight(B) − weight(C), uncalibrated.
+2. **Detect and merge.** `run_gc1.sh` ran SAM 3 (`facebook/sam3` revision
+   `3c879f39…`, BF16, detection threshold 0.3, mask threshold 0.5, batch 32)
+   with prompt **"round storage tanks"** as four independent replicas on gc1,
+   one per GPU (66–67 tiles each; all four GPUs reached 100% utilization).
+   `merge_shards.py` checked that every routed tile was processed exactly once,
+   then applied global box NMS at IoU 0.5 to all **850 raw instances**, keeping
+   **364**.
+
+| Timing, gc1 (4 × RTX PRO 6000 Blackwell) | Seconds |
+|---|---:|
+| Qwen3-VL 32B decisions, 736 tiles (earlier run, startup included) | 31.2 |
+| Gate: routing, CSV/GeoJSON, overview images | 1.2 |
+| SAM 3 workers + merge, startup through exit | 15 |
+| Longest SAM 3 worker: inference and patch outputs / model load | 7.29 / 1.20 |
+
+Single run; SAM 3 timing has one-second resolution from the launcher.
+
+Instance evaluation with `evaluate.py` against the 97 `Tanks` polygons uses
+**only labels and detections whose centroids lie inside `Extent`**: 85
+labels and 327 detections; 12 labels and 37 detections outside are ignored.
+Precision assumes every tank inside the extent is labeled. Nothing was tuned
+against the labels.
+
+| Match rule | Matched tanks | Missed | Unmatched detections | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| Any positive-area overlap | 85 | 0 | 242 | 26.0% | 100% | 41.3% |
+| Polygon IoU ≥ 0.50 | 81 | 4 | 246 | 24.8% | 95.3% | 39.3% |
+
+Every labeled tank inside the extent overlaps a detection; the matched IoU
+median is 0.763 and labels 23, 83, 101 and 106 fail the 0.50 shape test.
+Precision is low for two reasons. **Box NMS leaves duplicates**: among the 364
+kept detections, 111 pairs overlap by more than half of the smaller polygon
+(96 pairs by more than 80%), involving 161 detections, 100 of them clipped at a
+tile edge. With 50% overlap, each tank appears in up to four tiles, and a
+clipped fragment's box rarely reaches IoU 0.5 with the full tank's box. 87 of
+the 246 unmatched detections overlap a labeled tank. The other 159 overlap no
+label: other round structures or unlabeled tanks, not individually reviewed.
+Mask-aware suppression (intersection over the smaller polygon, preferring
+predictions that do not touch a tile edge) is the next step; it was not
+applied here.
+
+Output for ArcGIS Pro:
+`~/Documents/ArcGIS/Projects/Tanks/tank_detections_sam3_round_qwen32b_512.gpkg`
+(EPSG:4326, spatially indexed):
+
+- `detections`: 364 instances after NMS (`score`, `patch`, `touches_patch_edge`, `pixel_box`).
+- `raw_detections`: all 850 worker instances before NMS.
+- `gate_tiles`: the 265 routed tiles with Qwen's `decision` and `margin`.
+- `evaluated_detections`: the 327 detections inside the extent, `status` TP/FP at IoU ≥ 0.50.
+- `evaluated_tanks`: the 85 labels inside the extent with `status` and `best_iou`.
+- `extent`: the evaluation boundary.
+
+Local records: `results/sam3_gate512_qwen32b/`, `results/sam3_round_qwen32b_512/`
+(worker outputs, previews, logs, utilization, package freeze) and
+`results/sam3_round_validation/` (summary, CSVs, `validation_overview.jpg`,
+`missed_tanks.jpg`).
+
+```bash
+# gc1, inside tmux, after the multi-size Qwen32B run:
+.venv/bin/python patch_decisions.py gate --manifest results/tiles_gc1/512/manifest \
+  --shards results/tiles_gc1/512/qwen32b --out results/sam3_gate512_qwen32b
+bash run_gc1.sh 32 results/sam3_round_qwen32b_512 results/sam3_gate512_qwen32b "round storage tanks"
+# Locally, after copying both folders back:
+T=~/Documents/ArcGIS/Projects/Tanks R=results/sam3_round_qwen32b_512 V=results/sam3_round_validation
+.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged/detections.geojson --image $T/Tanks.tif --out $V
+.venv/bin/python to_gpkg.py $R/tank_detections_sam3_round_qwen32b_512.gpkg \
+  detections=$R/merged/detections.geojson raw_detections=$R/merged/raw_detections.geojson \
+  gate_tiles=results/sam3_gate512_qwen32b/patches.geojson evaluated_detections=$V/predictions.geojson \
+  evaluated_tanks=$V/ground_truth.geojson extent=$V/extent.geojson
+```
+
 ## Multi-size tiles on Tanks.tif (2026-10-20)
 
 Four decision backbones classified every tile of

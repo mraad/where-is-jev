@@ -4,13 +4,17 @@
 
 This repository is a Python experiment for detecting storage tanks in overhead imagery without task-specific training.
 
+- `patch_decisions.py`: 50%-overlap tile grid (`prepare --size`), shard collection, GeoPackage `export`, and `gate` (routes contains/partial tiles to SAM 3 in screen format).
+- `decide_qwen.py`, `decide_nemotron.py`: three-way A/B/C tile decisions with Qwen3-VL (transformers) or Nemotron (vLLM).
+- `download_backbone.py`: pinned checkpoint downloads; `compare_backbones.py`, `validate_tiles.py`: tile-decision scoring against reference labels.
 - `screen.py`: overlapping RGB windows and RemoteCLIP screening.
 - `detect.py`: SAM 3 inference, batching, and GPU sharding.
 - `merge_shards.py`: coverage validation and global duplicate suppression.
 - `evaluate.py`: polygon matching against FileGDB ground truth within the sample extent.
+- `to_gpkg.py`: combines GeoJSON outputs into one GeoPackage for ArcGIS Pro.
 - `jev_probe.py`: separate MLX/Jev diagnostic; `summarize.py`: local experiment summaries.
 - `test_*.py`: standard-library unit tests beside the modules.
-- `run_gc1.sh` and `benchmark_gc1.sh`: remote GPU execution helpers.
+- `run_gc1.sh`, `run_tiles.sh`, `run_decisions_gc*.sh`, `run_larger_backbones.sh`, `benchmark_gc1.sh`: remote GPU launchers, run inside tmux.
 - `checkpoints/` and `results/`: ignored model weights and generated artifacts. `README.md` records research, methods, and reproducible runs.
 
 ## Build, Test, and Development Commands
@@ -45,7 +49,7 @@ Use `unittest`; name files `test_<module>.py` and methods `test_<behavior>`. Add
 
 ## Commit & Pull Request Guidelines
 
-This checkout has no Git metadata, so no historical commit convention is established. Use concise imperative subjects, such as `Exclude outside detections from evaluation`. PRs should explain behavior changes, validation commands, and relevant issues. Include preview images when geographic outputs change; document model revisions, thresholds, and precision changes affecting results.
+Git was initialized on 2026-10-20 (baseline commit on `main`). Use concise imperative subjects, such as `Exclude outside detections from evaluation`. PRs should explain behavior changes, validation commands, and relevant issues. Include preview images when geographic outputs change; document model revisions, thresholds, and precision changes affecting results.
 
 ## Data & Evaluation Rules
 

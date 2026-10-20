@@ -2,9 +2,12 @@ import unittest
 import hashlib
 import json
 from pathlib import Path
+import csv
 import tempfile
 import numpy as np
-from patch_decisions import collect, grid_starts, LABELS
+import rasterio
+from rasterio.transform import from_origin
+from patch_decisions import collect, gate, grid_starts, prepare, LABELS
 
 
 class PatchDecisionTests(unittest.TestCase):
@@ -46,6 +49,39 @@ class PatchDecisionTests(unittest.TestCase):
                     output.write_text("\n".join(map(json.dumps, bad)))
                     with self.assertRaises(ValueError):
                         collect(manifest, shards)
+
+
+    def test_gate_routes_only_present_tiles_in_screen_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image = root / "image.tif"
+            with rasterio.open(image, "w", driver="GTiff", width=600, height=600, count=3, dtype="uint8",
+                               crs="EPSG:3857", transform=from_origin(0, 600, 1, 1)) as dst:
+                dst.write(np.full((3, 600, 600), 90, dtype="uint8"))
+            prepare(image, root / "manifest", size=512)
+            ids = [f["properties"]["id"] for f in json.loads((root / "manifest" / "patches.geojson").read_text())["features"]]
+            self.assertEqual(len(ids), 4)
+            worker = root / "run" / "shard-0"
+            worker.mkdir(parents=True)
+            (worker / "summary.json").write_text(json.dumps(dict(
+                num_shards=1, shard_index=0, model="test", revision="test", prompt_sha256="test",
+                manifest_sha256=hashlib.sha256((root / "manifest" / "patches.geojson").read_bytes()).hexdigest())))
+            weights = [[.7, .2, .1], [.1, .6, .3], [.1, .1, .8], [.2, .2, .6]]
+            decisions = [dict(id=i, decision=LABELS[int(np.argmax(w))], candidate_weights=w) for i, w in zip(ids, weights)]
+            (worker / "decisions.jsonl").write_text("\n".join(map(json.dumps, decisions)))
+            gate(root / "manifest", root / "run", root / "gate")
+            with (root / "gate" / "patches.csv").open() as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual([r["id"] for r in rows], ids[:2])
+            self.assertEqual([r["run_detector"] for r in rows], ["True", "True"])
+            self.assertAlmostEqual(float(rows[0]["margin"]), .8)
+            self.assertTrue((root / "gate" / "overview.jpg").exists())
+            self.assertEqual(json.loads((root / "gate" / "summary.json").read_text())["routed"], 2)
+            for d in decisions:
+                del d["candidate_weights"]
+            (worker / "decisions.jsonl").write_text("\n".join(map(json.dumps, decisions)))
+            with self.assertRaises(ValueError):
+                gate(root / "manifest", root / "run", root / "gate-no-weights")
 
 
 if __name__ == "__main__":

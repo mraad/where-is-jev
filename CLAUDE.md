@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 @AGENTS.md
 
-AGENTS.md's module list covers only the **earlier** detector pipeline; the current pipeline is below. `README.md` is the experiment log (methods, pinned revisions, results, caveats); update it when results change, and keep superseded results labeled rather than deleted.
+AGENTS.md lists the modules; the notes below cover how they fit together. `README.md` is the experiment log (methods, pinned revisions, results, caveats); update it when results change, and keep superseded results labeled rather than deleted.
 
 ## Commands
 
@@ -22,6 +22,8 @@ The `decide_*.py` scripts need a CUDA GPU, so they cannot run on this Mac. The `
 4. `compare_backbones.py`: scores the runs in `RUNS` against `results/backbone_comparison.json`; refuses to overwrite its output.
 
 Multi-size run on `Tanks.tif`: `run_tiles.sh MODEL...` (all sizes for each model, one replica per GPU of the host; Qwen on gc1, Nemotron on gc5) writes `results/tiles/<size>/<model>/`. Prepare manifests once and copy them to the other host, since `collect()` requires identical manifest hashes. `validate_tiles.py` derives reference labels from `Tanks.gdb`, scores tiles wholly inside `Extent`, and writes one GeoPackage.
+
+Detection after the gate: `patch_decisions.py gate` writes contains/partial tiles in `screen.py`'s folder format, so `run_gc1.sh BATCH RUN_DIR GATE_DIR PROMPT` drives the unchanged `detect.py --all-valid` and `merge_shards.py`; `evaluate.py` then scores instances and `to_gpkg.py` packages the layers. `merge_shards.py` box NMS leaves clipped-fragment duplicates at 50% overlap (see README).
 
 Coupling: `LABELS` and `QUESTION` in `patch_decisions.py` are shared by both decide scripts, `collect()` and `compare_backbones.py`. `LABELS` order maps to A/B/C. Editing `QUESTION` changes `prompt_sha256`, and re-running `prepare` changes `manifest_sha256`; either makes existing worker outputs incompatible with new ones.
 
