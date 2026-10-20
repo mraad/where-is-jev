@@ -1,0 +1,6 @@
+.venv/
+.venv-jev/
+__pycache__/
+checkpoints/
+results/
+.DS_Store
