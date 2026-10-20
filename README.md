@@ -1,5 +1,18 @@
 # Where Is Jev?
 
+The name is a play on *Where's Waldo?* When you look for Waldo, you scan the
+page left to right, top to bottom, until you find the cell he's in. Only then
+do you zoom in and actually spot him.
+
+Same idea here. What if I break the image into small cells and hand each one to
+a Jev-style model? It tells me whether the cell has something, nothing, or just
+part of something. If it's nothing, I don't waste time running SAM 3 on it. If
+it's something, the cell goes to SAM 3 (or any object detector) to do the real
+work.
+
+That's the whole project: a little experiment to try that out. So far it looks
+good; the numbers are below.
+
 Plain-HTML project overview with figures, for readers new to the project:
 [`docs/index.html`](docs/index.html).
 
