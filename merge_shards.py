@@ -6,9 +6,31 @@ import json
 from collections import Counter
 from pathlib import Path
 
-import torch
+import numpy as np
 from PIL import Image, ImageDraw
-from torchvision.ops import nms
+from shapely import STRtree
+from shapely.geometry import shape
+
+
+def suppress(objects, threshold=0.5):
+    """Greedy NMS on mask polygons by intersection over the smaller area; returns kept indices.
+
+    Masks clear of their tile edge rank before clipped ones, then by score, so a whole tank
+    from one tile suppresses its clipped fragments from the overlapping tiles.
+    """
+    # Area ratios in EPSG:4326 match metric ones at tile scale.
+    polygons = [shape(o["geometry"]) for o in objects]
+    if any(p.is_empty or not p.is_valid for p in polygons):
+        raise ValueError("Invalid prediction masks")
+    tree = STRtree(polygons)
+    kept = []
+    for i in sorted(range(len(objects)), key=lambda i: (objects[i]["properties"]["touches_patch_edge"],
+                                                        -objects[i]["properties"]["score"])):
+        p = polygons[i]
+        if not any(j in kept and p.intersection(polygons[j]).area > threshold * min(p.area, polygons[j].area)
+                   for j in tree.query(p, predicate="intersects")):
+            kept.append(i)
+    return kept
 
 
 def merge_shards(shards, screen, out, num_shards=4):
@@ -56,21 +78,18 @@ def merge_shards(shards, screen, out, num_shards=4):
     if Counter(ids) != Counter(expected):
         raise ValueError("Incomplete or duplicate global patch coverage")
     if objects:
-        boxes = torch.tensor([o["properties"]["pixel_box"] for o in objects], dtype=torch.float32)
-        scores = torch.tensor([o["properties"]["score"] for o in objects], dtype=torch.float32)
-        if (boxes.ndim != 2 or boxes.shape[1] != 4 or not torch.isfinite(boxes).all()
-                or not torch.isfinite(scores).all() or (boxes[:, 2:] <= boxes[:, :2]).any()):
+        boxes = np.array([o["properties"]["pixel_box"] for o in objects], dtype=float)
+        scores = np.array([o["properties"]["score"] for o in objects], dtype=float)
+        if (boxes.ndim != 2 or boxes.shape[1] != 4 or not np.isfinite(boxes).all()
+                or not np.isfinite(scores).all() or (boxes[:, 2:] <= boxes[:, :2]).any()):
             raise ValueError("Invalid prediction boxes or scores")
-        keep = nms(boxes, scores, 0.5).tolist()
-    else:
-        keep = []
-    # shortcut: box NMS can retain clipped duplicates; use mask IoU/IoS for production mosaics.
-    kept = [objects[i] for i in keep]
+    kept = [objects[i] for i in suppress(objects)]
     by_id = {r["id"]: r for r in patch_results}
     summary = {key: workers[0][key] for key in common_fields}
     summary.update(
         num_shards=num_shards, patches=len(expected), raw_instances=len(objects),
-        instances_after_nms=len(kept), nms_iou=0.5,
+        instances_after_nms=len(kept),
+        nms="greedy mask intersection over smaller area > 0.5; masks clear of tile edges first, then score",
         inference_and_output_worker_seconds=sum(w["inference_and_output_seconds"] for w in workers),
         longest_worker_inference_and_output_seconds=max(w["inference_and_output_seconds"] for w in workers),
         load_worker_seconds=sum(w["load_seconds"] for w in workers),

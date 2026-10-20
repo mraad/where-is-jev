@@ -15,68 +15,94 @@ Two stages on `Tanks.tif`, 512-pixel tiles with 50% overlap (736 tiles):
    with prompt **"round storage tanks"** as four independent replicas on gc1,
    one per GPU (66–67 tiles each; all four GPUs reached 100% utilization).
    `merge_shards.py` checked that every routed tile was processed exactly once,
-   then applied global box NMS at IoU 0.5 to all **850 raw instances**, keeping
-   **364**.
+   then suppressed duplicates among all **850 raw instances**, keeping **251**
+   (step 3).
+3. **Mask suppression.** Box NMS at IoU 0.5 first kept 364 instances, many of
+   them duplicates (below). `merge_shards.suppress()` replaced it: masks that do
+   not touch their tile edge rank before clipped ones, then by score, and a mask
+   is dropped when its intersection with a kept mask exceeds **half the smaller
+   mask's area** (0.5 chosen beforehand, matching the old IoU threshold; not
+   tuned on labels). `detect.py` uses the same function for single-process
+   runs. The same 850 worker instances were re-merged without re-running SAM 3;
+   the merge on gc1 and a local merge wrote byte-identical
+   `detections.geojson` (SHA-256 `4231f9a1…`). gc1's `.venv` gained
+   `shapely==2.2.0`, the lockfile pin, which the merge now imports.
 
 | Timing, gc1 (4 × RTX PRO 6000 Blackwell) | Seconds |
 |---|---:|
 | Qwen3-VL 32B decisions, 736 tiles (earlier run, startup included) | 31.2 |
 | Gate: routing, CSV/GeoJSON, overview images | 1.2 |
-| SAM 3 workers + merge, startup through exit | 15 |
+| SAM 3 workers + box-NMS merge, startup through exit | 15 |
 | Longest SAM 3 worker: inference and patch outputs / model load | 7.29 / 1.20 |
+| Mask-suppression re-merge of the 850 instances (CPU) | 0.82 |
 
 Single run; SAM 3 timing has one-second resolution from the launcher.
 
 Instance evaluation with `evaluate.py` against the 97 `Tanks` polygons uses
-**only labels and detections whose centroids lie inside `Extent`**: 85
-labels and 327 detections; 12 labels and 37 detections outside are ignored.
-Precision assumes every tank inside the extent is labeled. Nothing was tuned
-against the labels.
+**only labels and detections whose centroids lie inside `Extent`**: 85 labels
+(12 outside ignored); 224 of the 251 mask-suppressed detections (327 of the 364
+box-NMS ones). Precision assumes every tank inside the extent is labeled.
+Nothing was tuned against the labels.
 
-| Match rule | Matched tanks | Missed | Unmatched detections | Precision | Recall | F1 |
-|---|---:|---:|---:|---:|---:|---:|
-| Any positive-area overlap | 85 | 0 | 242 | 26.0% | 100% | 41.3% |
-| Polygon IoU ≥ 0.50 | 81 | 4 | 246 | 24.8% | 95.3% | 39.3% |
+| Merge | Match rule | Matched tanks | Missed | Unmatched detections | Precision | Recall | F1 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Mask suppression | Any positive-area overlap | 85 | 0 | 139 | 37.9% | 100% | 55.0% |
+| Mask suppression | Polygon IoU ≥ 0.50 | 82 | 3 | 142 | 36.6% | 96.5% | 53.1% |
+| Box NMS (superseded) | Any positive-area overlap | 85 | 0 | 242 | 26.0% | 100% | 41.3% |
+| Box NMS (superseded) | Polygon IoU ≥ 0.50 | 81 | 4 | 246 | 24.8% | 95.3% | 39.3% |
 
-Every labeled tank inside the extent overlaps a detection; the matched IoU
-median is 0.763 and labels 23, 83, 101 and 106 fail the 0.50 shape test.
-Precision is low for two reasons. **Box NMS leaves duplicates**: among the 364
-kept detections, 111 pairs overlap by more than half of the smaller polygon
-(96 pairs by more than 80%), involving 161 detections, 100 of them clipped at a
-tile edge. With 50% overlap, each tank appears in up to four tiles, and a
-clipped fragment's box rarely reaches IoU 0.5 with the full tank's box. 87 of
-the 246 unmatched detections overlap a labeled tank. The other 159 overlap no
-label: other round structures or unlabeled tanks, not individually reviewed.
-Mask-aware suppression (intersection over the smaller polygon, preferring
-predictions that do not touch a tile edge) is the next step; it was not
-applied here.
+**Box NMS left duplicates.** Among its 364 detections, 111 pairs overlapped by
+more than half of the smaller polygon (96 pairs by more than 80%), involving
+161 detections, 100 of them clipped at a tile edge. With 50% overlap, each tank
+appears in up to four tiles, and a clipped fragment's box rarely reaches IoU 0.5
+with the full tank's box. 87 of its 246 unmatched detections overlapped a
+labeled tank.
 
-Output for ArcGIS Pro:
-`~/Documents/ArcGIS/Projects/Tanks/tank_detections_sam3_round_qwen32b_512.gpkg`
-(EPSG:4326, spatially indexed):
+**Mask suppression** removed 599 masks, 323 of them clipped at a tile edge.
+Among the 251 kept, 28 touch a tile edge and no pair overlaps by more than
+0.486 of the smaller area (5 pairs above 0.2; areas in UTM 37N). Every labeled
+tank inside the extent still overlaps a detection; the matched IoU median rose
+from 0.763 to 0.782, and labels 83, 101 and 106 fail the 0.50 shape test
+(label 23 now passes). Of the 142 unmatched detections, 10 overlap a labeled
+tank and 132 overlap none: other round structures or unlabeled tanks, not
+individually reviewed. Intersection over the smaller area also drops a small
+mask inside a larger one: 172 suppressed masks lay under a kept mask over
+twice their area, 17 of them clear of any tile edge (nested rings, roof parts
+or distinct objects under a large mask; not reviewed). A larger false mask can
+hide a real tank this way, though no labeled tank lost its overlap here.
 
-- `detections`: 364 instances after NMS (`score`, `patch`, `touches_patch_edge`, `pixel_box`).
-- `raw_detections`: all 850 worker instances before NMS.
+Output for ArcGIS Pro (EPSG:4326, spatially indexed):
+`~/Documents/ArcGIS/Projects/Tanks/tank_detections_sam3_round_qwen32b_512_ios.gpkg`
+
+- `detections`: 251 instances after mask suppression (`score`, `patch`, `touches_patch_edge`, `pixel_box`).
+- `raw_detections`: all 850 worker instances before suppression.
 - `gate_tiles`: the 265 routed tiles with Qwen's `decision` and `margin`.
-- `evaluated_detections`: the 327 detections inside the extent, `status` TP/FP at IoU ≥ 0.50.
+- `evaluated_detections`: the 224 detections inside the extent, `status` TP/FP at IoU ≥ 0.50.
 - `evaluated_tanks`: the 85 labels inside the extent with `status` and `best_iou`.
 - `extent`: the evaluation boundary.
 
+Superseded box-NMS package, same layers with 364 / 327 detections:
+`tank_detections_sam3_round_qwen32b_512.gpkg` in the same folder.
+
 Local records: `results/sam3_gate512_qwen32b/`, `results/sam3_round_qwen32b_512/`
-(worker outputs, previews, logs, utilization, package freeze) and
-`results/sam3_round_validation/` (summary, CSVs, `validation_overview.jpg`,
-`missed_tanks.jpg`).
+(worker outputs, previews, logs, utilization, package freeze; `merged/` box
+NMS, `merged_ios/` and `merge_ios.log` mask suppression) and
+`results/sam3_round_ios_validation/` (superseded: `results/sam3_round_validation/`)
+with summary, CSVs, `validation_overview.jpg` and `missed_tanks.jpg`.
 
 ```bash
 # gc1, inside tmux, after the multi-size Qwen32B run:
 .venv/bin/python patch_decisions.py gate --manifest results/tiles_gc1/512/manifest \
   --shards results/tiles_gc1/512/qwen32b --out results/sam3_gate512_qwen32b
 bash run_gc1.sh 32 results/sam3_round_qwen32b_512 results/sam3_gate512_qwen32b "round storage tanks"
+# The box-NMS run above wrote merged/; with the current merge_shards.py, re-merge (gc1 or local):
+.venv/bin/python merge_shards.py --shards results/sam3_round_qwen32b_512 \
+  --screen results/sam3_gate512_qwen32b --out results/sam3_round_qwen32b_512/merged_ios
 # Locally, after copying both folders back:
-T=~/Documents/ArcGIS/Projects/Tanks R=results/sam3_round_qwen32b_512 V=results/sam3_round_validation
-.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged/detections.geojson --image $T/Tanks.tif --out $V
-.venv/bin/python to_gpkg.py $R/tank_detections_sam3_round_qwen32b_512.gpkg \
-  detections=$R/merged/detections.geojson raw_detections=$R/merged/raw_detections.geojson \
+T=~/Documents/ArcGIS/Projects/Tanks R=results/sam3_round_qwen32b_512 V=results/sam3_round_ios_validation
+.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged_ios/detections.geojson --image $T/Tanks.tif --out $V
+.venv/bin/python to_gpkg.py $R/tank_detections_sam3_round_qwen32b_512_ios.gpkg \
+  detections=$R/merged_ios/detections.geojson raw_detections=$R/merged_ios/raw_detections.geojson \
   gate_tiles=results/sam3_gate512_qwen32b/patches.geojson evaluated_detections=$V/predictions.geojson \
   evaluated_tanks=$V/ground_truth.geojson extent=$V/extent.geojson
 ```
@@ -583,10 +609,10 @@ Files:
 - `results/screen/summary.json`: parameters, prompts, timings, and provenance.
 
 `detect.py` runs SAM 3 on RGB patches, clips masks to valid image pixels, maps mask
-polygons to longitude/latitude, and applies global box NMS at IoU 0.5. Edge-touching
-predictions are flagged. This minimal merge can retain clipped duplicates and
-nested masks; mask-aware matching and seam ownership would be needed for a
-trustworthy inventory.
+polygons to longitude/latitude, and applies global duplicate suppression. Edge-touching
+predictions are flagged. The runs in this section used box NMS at IoU 0.5, which can
+retain clipped duplicates and nested masks; since 2026-10-20 the merge uses mask
+intersection over the smaller area (top section).
 
 `summarize.py` checks the completed outputs for consistent IDs, coverage, bounding
 coordinates and finite scores, then creates `results/comparison.json`,

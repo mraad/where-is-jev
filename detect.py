@@ -15,9 +15,9 @@ from PIL import Image, ImageDraw
 from rasterio.features import shapes
 from rasterio.warp import transform_geom
 from rasterio.windows import Window
-from torchvision.ops import nms
 from transformers import Sam3Model, Sam3Processor
 
+from merge_shards import suppress
 from screen import read_rgb
 
 
@@ -120,13 +120,7 @@ def main():
                               objects, patch_results, tick, inference_per_patch)
             del outputs, inputs, results
         inference_seconds = time.perf_counter()-start
-        if objects:
-            keep = nms(torch.tensor([o["properties"]["pixel_box"] for o in objects], dtype=torch.float32),
-                       torch.tensor([o["properties"]["score"] for o in objects]), 0.5).tolist()
-        else:
-            keep = []
-        # shortcut: box NMS can retain clipped duplicates; use mask IoU/IoS for production mosaics.
-        kept = [objects[i] for i in keep]
+        kept = [objects[i] for i in suppress(objects)]
         (args.out / "raw_detections.geojson").write_text(json.dumps(
             {"type": "FeatureCollection", "features": objects}))
         (args.out / "detections.geojson").write_text(json.dumps(

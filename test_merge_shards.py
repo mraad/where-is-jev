@@ -8,6 +8,13 @@ from PIL import Image
 from merge_shards import merge_shards
 
 
+def detection(patch, score, box, edge=False):
+    x1, y1, x2, y2 = box
+    return {"type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [[[x1, y1], [x2, y1], [x2, y2], [x1, y2], [x1, y1]]]},
+            "properties": {"patch": patch, "score": score, "pixel_box": box, "touches_patch_edge": edge}}
+
+
 class MergeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -30,13 +37,11 @@ class MergeTests(unittest.TestCase):
                 inference_and_output_seconds=2 + i,
                 patch_results=[{"id": f"p{i}", "detections": 1}],
             )))
-            (directory / "raw_detections.geojson").write_text(json.dumps({
-                "type": "FeatureCollection", "features": [{
-                    "type": "Feature", "geometry": None,
-                    "properties": {"patch": f"p{i}", "score": 0.9 - i * 0.1,
-                                   "pixel_box": [10 + i, 10, 30 + i, 30]},
-                }],
-            }))
+            self.write_raw(i, detection(f"p{i}", 0.9 - i * 0.1, [10 + i, 10, 30 + i, 30]))
+
+    def write_raw(self, index, feature):
+        (self.shards / f"shard-{index}" / "raw_detections.geojson").write_text(json.dumps(
+            {"type": "FeatureCollection", "features": [feature]}))
 
     def merge(self):
         return merge_shards(self.shards, self.screen, self.out, 2)
@@ -50,6 +55,18 @@ class MergeTests(unittest.TestCase):
         kept = json.loads((self.out / "detections.geojson").read_text())["features"]
         self.assertEqual(kept[0]["properties"]["patch"], "p0")
         self.assertTrue((self.out / "detections_overview.jpg").is_file())
+
+    def test_whole_mask_suppresses_higher_scoring_clipped_fragment(self):
+        # Box IoU is 0.3, so box NMS kept both; the fragment lies wholly inside the whole mask.
+        self.write_raw(1, detection("p1", 0.95, [24, 10, 30, 30], edge=True))
+        result = self.merge()
+        self.assertEqual(result["instances_after_nms"], 1)
+        kept = json.loads((self.out / "detections.geojson").read_text())["features"]
+        self.assertEqual(kept[0]["properties"]["patch"], "p0")
+
+    def test_separate_masks_are_kept(self):
+        self.write_raw(1, detection("p1", 0.95, [30, 10, 50, 30], edge=True))
+        self.assertEqual(self.merge()["instances_after_nms"], 2)
 
     def test_missing_worker_is_rejected(self):
         (self.shards / "shard-1" / "summary.json").unlink()
