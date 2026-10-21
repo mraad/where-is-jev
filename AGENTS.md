@@ -16,6 +16,7 @@ This repository is a Python experiment for detecting storage tanks in overhead i
 - `jev_probe.py`: separate MLX/Jev diagnostic; `summarize.py`: local experiment summaries.
 - `test_*.py`: standard-library unit tests beside the modules.
 - `run_gc1.sh`, `run_tiles.sh`, `run_decisions_gc*.sh`, `run_larger_backbones.sh`, `benchmark_gc1.sh`: remote GPU launchers, run inside tmux.
+- `data/Tanks.gpkg`: GeoPackage copy of the `Tanks` labels (see README).
 - `checkpoints/` and `results/`: ignored model weights and generated artifacts. `README.md` records research, methods, and reproducible runs.
 
 ## Build, Test, and Development Commands

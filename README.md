@@ -16,6 +16,34 @@ good; the numbers are below.
 Plain-HTML project overview with figures, for readers new to the project:
 [`docs/index.html`](docs/index.html).
 
+## Labels: `data/Tanks.gpkg`
+
+`data/Tanks.gpkg` is a GeoPackage copy of the `Tanks` layer in `Tanks.gdb`,
+so the labels ship with the code. The image (`Tanks.tif`) is not in the
+repository.
+
+- Layer `Tanks`: 97 polygons, EPSG:3857, spatially indexed.
+- Feature IDs are the FileGDB OBJECTIDs (1–109, with gaps). The OBJECTIDs in
+  this README, such as the missed tanks 83, 101 and 106, refer to them.
+- Fields `Classname`, `Classvalue`, `Shape_Length` and `Shape_Area` are copied
+  unchanged.
+- 59 tanks are stored in the FileGDB as true circles (circular arcs), which a
+  conformant GeoPackage polygon layer cannot hold. The copy stores each one as
+  a 90-segment polygon (one vertex every 4°), the same geometry that
+  `evaluate.py` and `validate_tiles.py` read from the FileGDB through GDAL. The
+  chord error is about 0.06% of the radius. `Shape_Length` and `Shape_Area`
+  still describe the true circles; they differ from the polygon values by up
+  to 0.02% and 0.08%.
+- The `Extent` layer is not included, so `evaluate.py` and `validate_tiles.py`
+  still need `Tanks.gdb`.
+
+Rebuild it from the FileGDB (GDAL 3.13.3 was used):
+
+```bash
+ogr2ogr -f GPKG -preserve_fid -nln Tanks -nlt MULTIPOLYGON \
+  data/Tanks.gpkg ~/Documents/ArcGIS/Projects/Tanks/Tanks.gdb Tanks
+```
+
 ## SAM 3 "round storage tanks" after the Qwen3-VL 4B gate (2026-10-20)
 
 Same pipeline as the Qwen3-VL 32B run in the next section: the same 736 tiles
