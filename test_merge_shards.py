@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from merge_shards import merge_shards
+from merge_shards import merge_shards, suppress
 
 
 def detection(patch, score, box, edge=False):
@@ -45,6 +45,13 @@ class MergeTests(unittest.TestCase):
 
     def merge(self):
         return merge_shards(self.shards, self.screen, self.out, 2)
+
+    def test_suppression_preserves_score_order_and_greedy_chain(self):
+        objects = [detection("p0", .8, [3, 0, 7, 4]),
+                   detection("p1", .9, [0, 0, 4, 4]),
+                   detection("p2", .7, [6, 0, 10, 4])]
+        self.assertEqual(suppress(objects, threshold=.2), [1, 2])
+        self.assertEqual(suppress([]), [])
 
     def test_cross_shard_duplicates_are_suppressed_from_raw(self):
         result = self.merge()

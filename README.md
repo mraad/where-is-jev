@@ -1,5 +1,55 @@
 # Where Is Jev?
 
+Plain-language HTML overview with large images:
+[View the project artifact](https://where-is-jev-explained.mraad23.chatgpt.site)
+(private Site; owner access required). Source: `sites/tank-project-overview/dist/`.
+
+
+Release version: 0.0.1 (see `VERSION`).
+
+Patch validation (2026-11-10, gc5): baseline and 0.0.1 passed 25 and 26 unit
+tests respectively. Preparing all 736 windows from `Tanks.tif` produced identical
+patch GeoJSON and manifest metadata (excluding elapsed time). Nemotron Omni
+30B-A3B BF16 produced byte-identical decisions on 16 evenly spaced tiles
+(`--limit 16 --batch-size 4`): 7 contains, 4 partial, 5 absent. This used one
+RTX PRO 6000 Blackwell GPU, PyTorch 2.13.0+cu130, vLLM 0.32.0, and checkpoint
+revision `e5e9932441de940c9a62185c870ea5bcd4cd24e2`.
+
+Suppression matched the baseline on seeded random geometries at four thresholds.
+For 4,000 separate synthetic polygons, three-run median time fell from 0.346 s
+to 0.062 s (5.5×); this is a CPU microbenchmark, not an end-to-end GPU speedup.
+Scripts, logs, isolated source copies, and comparisons remain on gc5 at
+`/home/ubuntu/dh/jev-retest-0.0.1-20261110/` (`run.sh`,
+`suppression-check.py`, `comparison.json`). A subsequent full-dataset Nemotron run
+(`--batch-size 4`, no limit) verified complete, unique coverage and identical
+baseline/branch decision records for all 736 tiles: 214 contains, 100 partial,
+422 absent. Baseline/branch engine times were 28.27/28.54 s, pipeline times
+31.44/31.70 s, and model load times 25.94/25.73 s; these single runs do not
+establish a GPU speedup. Full-run evidence is in `run-full.sh`,
+`full-comparison.json`, and `baseline/gpu-full` / `candidate/gpu-full`
+under the same remote directory. Full SAM 3 validation subsequently passed on gc1 (four RTX PRO 6000 Blackwell
+GPUs), using all 736 tiles without a gate, prompt `round storage tanks`,
+BF16, batch size 8 per GPU, and threshold 0.3. The restored checkpoint was
+revision `3c879f39826c281e95690f02c7821c4de09afae7`; its weight checksum
+matched the original recorded SHA-256. The installed cuDNN required the
+existing CUDA 12 cuBLAS library on `LD_LIBRARY_PATH`; the initial failed
+attempt was preserved and the retry used fresh output directories.
+
+Baseline and branch produced byte-identical raw and retained GeoJSON and
+evaluation tables: 959 raw masks → 262 detections. Within the extent, 234
+detections and 85 labels were evaluated; 28 detections outside were excluded.
+At IoU ≥ 0.50 both yielded 82 TP, 152 FP, 3 FN, precision 35.0%, recall 96.5%,
+and F1 51.4%. Precision assumes complete labels within the extent.
+All 25 baseline and 26 branch unit tests passed on gc1.
+Longest-worker inference/output times were 26.30/15.27 s; run order and
+warmup confound these single measurements, so they do not establish speedup.
+
+Remote evidence: gc1
+`/home/ubuntu/dh/jev-sam3-retest-0.0.1-20261110/`, including `retry.sh`,
+`comparison.json`, and each variant's `sam-retry`, `merged-retry`,
+and `evaluation-retry` directories. Local evidence and preview images are
+archived in ignored `results/gc1_sam3_retest_0.0.1/evidence.tar.gz`.
+
 The name is a play on *Where's Waldo?* When you look for Waldo, you scan the
 page left to right, top to bottom, until you find the cell he's in. Only then
 do you zoom in and actually spot him.
