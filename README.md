@@ -1,5 +1,33 @@
 # Where Is Jev?
 
+## New finding: filtering SAM 3 candidates
+
+A supervised pilot on gc5 compared a linear classifier on frozen image features
+with image-capable Kev-0.8B, before and after tuning only its decision head.
+On a spatially held-out region with 71 candidates and 13 labeled tanks:
+
+| Filter | TP / FP / FN | Precision | Recall |
+|---|---|---:|---:|
+| No filter | 11 / 60 / 2 | 15.5% | 84.6% |
+| Linear image classifier | 11 / 6 / 2 | **64.7%** | 84.6% |
+| Image-Kev, untuned | 11 / 38 / 2 | 22.4% | 84.6% |
+| Image-Kev, tuned head | 11 / 35 / 2 | 23.9% | 84.6% |
+
+The linear classifier removed 54 of 60 false positives while preserving all
+11 correctly detected tanks. Kev head tuning removed three additional false
+positives compared with untuned Kev. The next experiment should validate the
+simpler classifier on independent imagery before expanding Kev training.
+
+This is one scene, geometry-derived labels, 100 clear training examples,
+and thresholds selected on a separate calibration band. It is not a
+full-scene filtered score or a claim of generalization. No production filter
+is enabled. The original pipeline remains a training-free baseline.
+
+See [implementation, data contract, reproduction and evidence](experiments/README.md).
+
+
+## Project overview and baseline validation
+
 Plain-language HTML overview with large images:
 [View the project artifact](https://where-is-jev-explained.mraad23.chatgpt.site)
 (private Site; owner access required). Source: `sites/tank-project-overview/dist/`.
