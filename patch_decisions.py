@@ -45,6 +45,8 @@ def prepare(image, out, size=512):
     if out.exists() and any(out.iterdir()):
         raise ValueError("Choose a fresh output directory")
     tick = time.perf_counter()
+    with image.open("rb") as stream:
+        image_sha = hashlib.file_digest(stream, "sha256").hexdigest()
     features, skipped, total = [], 0, 0
     with rasterio.open(image) as src:
         if src.crs is None:
@@ -67,7 +69,7 @@ def prepare(image, out, size=512):
                     total_windows=total, valid_windows=len(features), nodata_skipped=skipped,
                     edge_policy=f"Fixed {size//2}-pixel grid; outer windows padded gray to {size} pixels; footprints clipped to raster",
                     nodata_policy="Wholly invalid windows omitted, not classified as no tank",
-                    image_sha256=hashlib.sha256(image.read_bytes()).hexdigest(),
+                    image_sha256=image_sha,
                     prepare_seconds=time.perf_counter()-tick)
     out.mkdir(parents=True, exist_ok=True)
     (out / "patches.geojson").write_text(json.dumps(dict(type="FeatureCollection", features=features)))

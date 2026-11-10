@@ -45,7 +45,8 @@ def main():
     a = p.parse_args()
     if a.out.exists() and any(a.out.iterdir()):
         p.error("Choose a fresh output directory")
-    image_sha = hashlib.sha256(a.image.read_bytes()).hexdigest()
+    with a.image.open("rb") as stream:
+        image_sha = hashlib.file_digest(stream, "sha256").hexdigest()
     with rasterio.open(a.image) as src:
         crs, transform, shape = src.crs, src.transform, [src.height, src.width]
     tanks, tanks_crs = read_layer(a.gdb, "Tanks")

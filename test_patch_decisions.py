@@ -59,6 +59,8 @@ class PatchDecisionTests(unittest.TestCase):
                                crs="EPSG:3857", transform=from_origin(0, 600, 1, 1)) as dst:
                 dst.write(np.full((3, 600, 600), 90, dtype="uint8"))
             prepare(image, root / "manifest", size=512)
+            metadata = json.loads((root / "manifest" / "manifest.json").read_text())
+            self.assertEqual(metadata["image_sha256"], hashlib.sha256(image.read_bytes()).hexdigest())
             ids = [f["properties"]["id"] for f in json.loads((root / "manifest" / "patches.geojson").read_text())["features"]]
             self.assertEqual(len(ids), 4)
             worker = root / "run" / "shard-0"

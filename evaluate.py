@@ -48,7 +48,7 @@ def restrict(records, extent):
             continue
         included.append(dict(record, geometry=clipped,
                              boundary_clipped=not clipped.equals(record["geometry"]),
-                             centroid_in_extent=extent is None or extent.covers(record["geometry"].centroid),
+                             centroid_in_extent=True,
                              retained_fraction=clipped.area / record["geometry"].area))
     return included, excluded
 

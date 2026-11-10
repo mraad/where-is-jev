@@ -24,12 +24,14 @@ def suppress(objects, threshold=0.5):
         raise ValueError("Invalid prediction masks")
     tree = STRtree(polygons)
     kept = []
+    kept_indices = set()
     for i in sorted(range(len(objects)), key=lambda i: (objects[i]["properties"]["touches_patch_edge"],
                                                         -objects[i]["properties"]["score"])):
         p = polygons[i]
-        if not any(j in kept and p.intersection(polygons[j]).area > threshold * min(p.area, polygons[j].area)
+        if not any(j in kept_indices and p.intersection(polygons[j]).area > threshold * min(p.area, polygons[j].area)
                    for j in tree.query(p, predicate="intersects")):
             kept.append(i)
+            kept_indices.add(i)
     return kept
 
 
