@@ -41,6 +41,7 @@
     <li><a href="#decisions">Tile decisions</a></li>
     <li><a href="#detections">Detections</a></li>
     <li><a href="#examples">Example tiles</a></li>
+    <li><a href="#filter-pilot">Candidate-filter pilot</a></li>
     <li><a href="#limits">Limits</a></li>
     <li><a href="#procedure">Procedure</a></li>
     <li><a href="#output">Output</a></li>
@@ -50,13 +51,13 @@
 </nav>
 
 <h2 id="summary">1. Summary</h2>
-<p>This project finds storage tanks in one aerial image. It uses pretrained models only. It does not train a model for this task.</p>
+<p>This project finds storage tanks in one aerial image. Its original pipeline uses pretrained models without task-specific training. A separate supervised candidate-filter pilot is described below.</p>
 <p>The method has two stages:</p>
 <ol>
   <li>A vision-language model (VLM) makes a decision for each tile. The decision is one of three: the tile contains a tank, contains part of a tank, or contains no tank. This stage is the gate.</li>
   <li>SAM 3 makes detections in the tiles that contain all or part of a tank.</li>
 </ol>
-<p>The project compares the detections with the labels in the <code>Tanks</code> layer. Each stage that uses a model runs on all GPUs of one host at the same time.</p>
+<p>The project compares the detections with the labels in the <code>Tanks</code> layer. The original pipeline distributes model inference across the GPUs of one host; the new filter pilot used one GPU for feature extraction.</p>
 <p>Results with the Qwen3-VL 32B gate (section 5 gives all values):</p>
 <ul>
   <li>SAM 3 matches 82 of 85 labels at IoU 0.5 or more (recall 96.5%). All 85 labels touch a detection.</li>
@@ -169,6 +170,25 @@ Answer with exactly one letter: A, B, or C.</pre>
   <img src="images/missed_tanks.jpg" alt="Three labels without a match at IoU 0.5, with the label in red and the nearest detection in magenta.">
   <figcaption><strong>Figure 6.</strong> The three labels without a match at IoU 0.5. Red: label. For labels 83 and 101, the detection also covers the side wall of the tank, because the view is oblique. The label covers the roof only. For label 106, the detection covers a smaller shape. Each of these labels touches a detection.</figcaption>
 </figure>
+
+<section id="filter-pilot">
+<h2>Can a small classifier remove false alarms?</h2>
+<p>A new supervised experiment starts after SAM 3 has found candidate shapes. It gives a classifier a crop around each candidate and asks whether the central object is a storage tank. This filter aims to reduce the number of false alarms a person needs to inspect.</p>
+<p>We compared a simple linear classifier using frozen image features with Kev-0.8B connected to its original vision encoder. Kev was measured both as supplied and after training only its small decision head. Its vision encoder, language model, and adapter were kept frozen.</p>
+<p>The pilot used 100 clear training examples, a separate calibration region to choose acceptance thresholds, and a test region containing 71 candidate crops and 13 reference tanks. Crops crossing the geographic split boundaries were excluded. No reference tank overlapped candidate polygons in multiple partitions.</p>
+<div class="table-wrap table"><table>
+<caption style="text-align:left;margin-bottom:12px">Candidate-filter pilot: spatial test region only</caption>
+<thead><tr><th scope="col">Filter</th><th scope="col">Correct detections</th><th scope="col">False alarms</th><th scope="col">Precision</th></tr></thead>
+<tbody>
+<tr><td>No filter</td><td>11</td><td>60</td><td>15.5%</td></tr>
+<tr><td>Linear image classifier</td><td>11</td><td>6</td><td>64.7%</td></tr>
+<tr><td>Image-Kev, untuned</td><td>11</td><td>38</td><td>22.4%</td></tr>
+<tr><td>Image-Kev, tuned head</td><td>11</td><td>35</td><td>23.9%</td></tr>
+</tbody></table></div>
+<p><strong>The simpler classifier performed best in this pilot.</strong> It removed 54 of 60 false alarms while retaining all 11 correctly detected tanks. All methods still missed two of the 13 reference tanks, giving the same recall of 84.6%. Kev head training improved its result modestly, removing three additional false alarms.</p>
+<p class="note">These numbers describe a small test region, not the full-image result shown elsewhere on this page. Labels were derived from reference geometry without an independent human review. The same scene supplies training and evaluation, so this does not establish performance at another location. The next step is to validate the linear classifier on independent imagery; no production filter has been enabled.</p>
+<p><a href="../experiments/README.md">Implementation, reproduction instructions, and experiment evidence</a>.</p>
+</section>
 
 <h2 id="limits">7. Limits</h2>
 <p class="note"><strong>NOTE:</strong> The results come from one image and one run for each configuration. They do not rank the models in general.</p>
