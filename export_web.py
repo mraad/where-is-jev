@@ -1,8 +1,8 @@
 """Export finished results as static files for the interactive map in app/ (no GPU).
 
 Writes a JPEG of the scene (bands 1-3) with its EPSG:3857 bounds, WGS84 GeoJSON layers for the
-512 px gate decisions, SAM 3 detections, reference labels and the Kev filter pilot, and a
-summary.json of the recorded metrics that the app checks its own numbers against.
+512 px gate decisions, SAM 3 detections and reference labels, and a summary.json of the
+recorded metrics, which the app reads its counts from.
 """
 
 import argparse
@@ -15,12 +15,13 @@ import rasterio
 import shapely
 from PIL import Image
 from pyogrio.raw import read
-from shapely.geometry import mapping, shape
+from shapely.geometry import mapping
 
 from evaluate import project
+from patch_decisions import LABELS
+from validate_tiles import MODELS
 
-TILE_FIELDS = ["patch_id", "in_extent", "truth", "qwen4b", "qwen32b", "nemotron12b", "nemotron30b"]
-KEV_MODELS = ["vision_linear", "kev_zero_shot", "kev_tuned_head"]
+TILE_FIELDS = ["patch_id", "in_extent", "truth", *MODELS]
 MAX_JPEG_BYTES = 15_000_000
 
 
@@ -54,29 +55,13 @@ def run_summary(gpkg, size=512):
     return {row["model"]: row for row in rows if row["tile_size"] == size}
 
 
-def kev(predictions, scores):
-    """Keep scored candidates only (buffer candidates were never scored), with their scores."""
-    by_id = {r["id"]: r for r in scores}
-    features = []
-    for f in predictions:
-        record = by_id.get(f["properties"]["id"])
-        if record is None:
-            continue
-        props = {k: record[k] for k in ["id", "split", "original_tp", *KEV_MODELS]}
-        props["original_tp"] = int(props["original_tp"])
-        props["score"] = f["properties"]["score"]
-        features.append(feature(shape(f["geometry"]), props))
-    if len(features) != len(scores):
-        raise ValueError("Kev scores reference candidates missing from the predictions file")
-    return collection(features)
-
-
-def band(cuts, src, extent):
-    """Test band: pixel columns cuts[2]..cuts[3] over the full image height, clipped to the extent."""
-    left, top = src.transform @ (cuts[2], 0)
-    right, bottom = src.transform @ (cuts[3], src.height)
-    box = project(shapely.box(left, bottom, right, top), src.crs, "EPSG:4326")
-    return collection([feature(box.intersection(extent), {"split": "test"})])
+def check_gate(tile_features, detections, gate):
+    """Every detection must come from a tile that `gate` routed to SAM 3; else the flag names the wrong run."""
+    decisions = {f["properties"]["patch_id"]: f["properties"][gate] for f in tile_features}
+    wrong = sorted({d["properties"]["patch"] for d in detections
+                    if decisions.get(d["properties"]["patch"], LABELS[2]) == LABELS[2]})
+    if wrong:
+        raise ValueError(f"--gate {gate} did not route tiles {wrong[:5]} that have detections; wrong --gate?")
 
 
 def scene_jpeg(src, out):
@@ -95,21 +80,17 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--image", type=Path, required=True)
     p.add_argument("--tiles-gpkg", type=Path, required=True)
-    p.add_argument("--validation", type=Path, default=Path("results/sam3_round_validation"))
-    p.add_argument("--kev-inputs", type=Path, default=Path("results/kev_filter_inputs/candidate/evaluation-retry"))
-    p.add_argument("--kev-pilot", type=Path, default=Path("results/kev_filter_pilot/pilot-v1-recount"))
+    p.add_argument("--validation", type=Path, required=True, help="evaluate.py folder of the featured SAM 3 run")
+    p.add_argument("--gate", required=True, choices=MODELS, help="model whose tile decisions fed that run")
     p.add_argument("--out", type=Path, required=True)
     a = p.parse_args()
     if a.out.exists() and any(a.out.iterdir()):
         p.error("Choose a fresh output directory")
-    for path in [a.image, a.tiles_gpkg, a.validation, a.kev_inputs, a.kev_pilot]:
+    for path in [a.image, a.tiles_gpkg, a.validation]:
         if not path.exists():
             p.error(f"Missing input: {path}")
 
     extent_features = read_features(a.validation / "extent.geojson")
-    extent = shape(extent_features[0]["geometry"])
-    report = json.loads((a.kev_pilot / "report.json").read_text())
-    cuts = json.loads((a.kev_pilot / "records.json").read_text())["cuts"]
     validation = json.loads((a.validation / "summary.json").read_text())
 
     with rasterio.open(a.image) as src:
@@ -119,24 +100,22 @@ def main():
         scene = dict(xmin=b.left, ymin=b.bottom, xmax=b.right, ymax=b.top, wkid=3857,
                      width=src.width, height=src.height)
         # Read every input before writing anything, so a bad input leaves --out empty.
+        tile_layer = tiles(a.tiles_gpkg)
+        detections = read_features(a.validation / "predictions.geojson")
+        check_gate(tile_layer["features"], detections, a.gate)
         layers = {
-            "tiles_512.geojson": tiles(a.tiles_gpkg),
-            "detections.geojson": collection(read_features(a.validation / "predictions.geojson")),
+            "tiles_512.geojson": tile_layer,
+            "detections.geojson": collection(detections),
             "truth.geojson": collection(read_features(a.validation / "ground_truth.geojson")),
             "extent.geojson": collection(extent_features),
-            "kev.geojson": kev(read_features(a.kev_inputs / "predictions.geojson"),
-                               json.loads((a.kev_pilot / "scores.json").read_text())),
-            "kev_band.geojson": band(cuts, src, extent),
         }
         summary = dict(
             scene=scene,
+            gate=a.gate,
             tiles=run_summary(a.tiles_gpkg),
             # Feature `status` (TP/FP, matched/FN) comes from the IoU >= 0.5 matching.
             detections=dict(ground_truth_evaluated=validation["ground_truth_evaluated"],
                             iou_0_50=validation["evaluations"]["iou_0.50"]),
-            kev=dict(thresholds={m: report["models"][m]["threshold"] for m in KEV_MODELS},
-                     test_reference_tanks=report["test_reference_tanks"],
-                     detection_evaluation=report["detection_evaluation"], scope=report["scope"]),
         )
         a.out.mkdir(parents=True, exist_ok=True)
         scene["downsample"] = scale = scene_jpeg(src, a.out / "scene.jpg")

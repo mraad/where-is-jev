@@ -34,28 +34,34 @@ See [implementation, data contract, reproduction and evidence](experiments/READM
 
 `app/` is a vanilla JavaScript map on ArcGIS Maps SDK for JavaScript 5.2.2
 (loaded from `https://js.arcgis.com/5.2.2/`; that release's core reports build
-5.2.1). It needs no API key and no basemap. It shows:
+5.2.1). It needs no API key and no basemap. It walks through the featured run
+in four steps, with Back/Next buttons. Each step shows only its own layers:
 
-- the 512 px gate tiles from `Tanks.tif`, colored by one model's decision or the
-  reference label, with an option to show only disagreements;
-- the SAM 3 "round storage tanks" detections after the Qwen3-VL 32B gate,
-  TP/FP at IoU >= 0.5, missed labels, and a minimum-score slider;
-- the Kev filter pilot candidates in the spatial test band, kept or dropped by
-  each filter's recorded threshold.
+1. the photo and the evaluation `Extent` (85 labeled tanks);
+2. the 512 px tiles the Qwen3-VL 32B gate routed to SAM 3 (235 contains,
+   30 partial; 471 "no tank" tiles hidden);
+3. the SAM 3 "round storage tanks" outlines after mask suppression (224
+   inside the extent);
+4. the same outlines scored at IoU >= 0.5: 82 TP, 142 FP, 3 missed labels.
 
-The side panel recomputes the metrics in the browser. On load it checks them
-against `summary.json`, which holds the recorded Python results, and reports a
-mismatch. Score-slider counts are exact because matching assigns labels in
-descending score order, so a score cut only truncates it. Tile metrics are
-patch-level presence on the 513 tiles of the multi-size grid wholly inside the
-extent, not the 144-patch comparison above.
+The page reads every count from `summary.json`, the recorded Python
+evaluation that the same export writes beside the layers.
+
+Simplified on 2026-11-16: the earlier version (model selector, disagreement
+filter, score slider, Kev pilot layer) was too dense to explain. It also showed
+the superseded box-NMS detections (81 / 246 / 4), because `export_web.py`
+defaulted to `results/sam3_round_validation`, and colored tiles by the Qwen 4B
+gate. `--validation` and `--gate` are now required, and the gate is written to
+`summary.json`; the export stops if `--gate` decided "no tank" on a tile that
+has detections. The Kev pilot layers are no longer exported.
 
 `app/data/` is generated and ignored, because it holds imagery derived from the
 source TIFF:
 
 ```bash
 .venv/bin/python export_web.py --image ~/Documents/ArcGIS/Projects/Tanks/Tanks.tif \
-  --tiles-gpkg results/tiles_validation/tank_tiles_validation.gpkg --out app/data
+  --tiles-gpkg results/tiles_validation/tank_tiles_validation.gpkg \
+  --validation results/sam3_round_ios_validation --gate qwen32b --out app/data
 python3 -m http.server -d app 8000   # open http://localhost:8000
 ```
 
