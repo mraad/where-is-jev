@@ -7,7 +7,7 @@ pids=()
 sizes=(4 8 16 32)
 for gpu in 0 1 2 3; do
     CUDA_VISIBLE_DEVICES="$gpu" .venv/bin/python -u detect.py \
-        --all-valid --model checkpoints/sam3_hub --prompt "circular storage tank" \
+        --screen results/screen --all-valid --model checkpoints/sam3_hub --prompt "circular storage tank" \
         --limit 64 --batch-size "${sizes[$gpu]}" --dtype bfloat16 \
         --out "results/gc1_probe/batch-${sizes[$gpu]}" \
         > "results/gc1_probe/gpu-$gpu.log" 2>&1 &

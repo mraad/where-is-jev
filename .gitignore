@@ -5,4 +5,5 @@ checkpoints/
 results/
 .DS_Store
 app/data/
+data/*.tif
 sites/

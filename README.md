@@ -215,7 +215,7 @@ with the same six layers and fields as the 32B package described below
 bash run_gc1.sh 32 results/sam3_round_qwen4b_512 results/sam3_gate512_qwen4b "round storage tanks"
 # Locally, after copying both folders back:
 T=~/Documents/ArcGIS/Projects/Tanks R=results/sam3_round_qwen4b_512 V=results/sam3_round_qwen4b_validation
-.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged/detections.geojson --image $T/Tanks.tif --out $V
+.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged/detections.geojson --out $V
 .venv/bin/python to_gpkg.py $R/tank_detections_sam3_round_qwen4b_512.gpkg \
   detections=$R/merged/detections.geojson raw_detections=$R/merged/raw_detections.geojson \
   gate_tiles=results/sam3_gate512_qwen4b/patches.geojson evaluated_detections=$V/predictions.geojson \
@@ -381,7 +381,9 @@ Local records: `results/sam3_gate512_qwen32b/`, `results/sam3_round_qwen32b_512/
 (worker outputs, previews, logs, utilization, package freeze; `merged/` box
 NMS, `merged_ios/` and `merge_ios.log` mask suppression) and
 `results/sam3_round_ios_validation/` (superseded: `results/sam3_round_validation/`)
-with summary, CSVs, `validation_overview.jpg` and `missed_tanks.jpg`.
+with summary, CSVs, `validation_overview.jpg` and `missed_tanks.jpg`. Those two
+previews came from `evaluate.py --image`, removed on 2026-11-16; `figures.py`
+now renders the same views (`detections.jpg`, `missed_tanks.jpg`).
 
 ```bash
 # gc1, inside tmux, after the multi-size Qwen32B run:
@@ -393,7 +395,7 @@ bash run_gc1.sh 32 results/sam3_round_qwen32b_512 results/sam3_gate512_qwen32b "
   --screen results/sam3_gate512_qwen32b --out results/sam3_round_qwen32b_512/merged_ios
 # Locally, after copying both folders back:
 T=~/Documents/ArcGIS/Projects/Tanks R=results/sam3_round_qwen32b_512 V=results/sam3_round_ios_validation
-.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged_ios/detections.geojson --image $T/Tanks.tif --out $V
+.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged_ios/detections.geojson --out $V
 .venv/bin/python to_gpkg.py $R/tank_detections_sam3_round_qwen32b_512_ios.gpkg \
   detections=$R/merged_ios/detections.geojson raw_detections=$R/merged_ios/raw_detections.geojson \
   gate_tiles=results/sam3_gate512_qwen32b/patches.geojson evaluated_detections=$V/predictions.geojson \
@@ -1182,14 +1184,14 @@ Run again with a fresh output directory:
 .venv/bin/python evaluate.py \
   --gdb ~/Documents/ArcGIS/Projects/Tanks/Tanks.gdb \
   --detections results/gc1_gpu/merged/detections.geojson \
-  --image ~/Documents/ArcGIS/Projects/Tanks/20150520_075001.tif \
   --out results/new_validation
 ```
 
 Final results are in **`results/validation_inside_extent/`**:
 
 - `summary.json`: counts, metrics, explicit extent-only scope note, input prediction hash.
-- `validation_overview.jpg`: green matched labels, red missed labels, cyan
+- `validation_overview.jpg` (from the since-removed `evaluate.py --image`; use
+  `figures.py` today): green matched labels, red missed labels, cyan
   predictions, and yellow extent, using the IoU ≥ 0.50 assignment.
 - `missed_tanks.jpg`: close-ups of all five labels missed at IoU ≥ 0.50.
 - `predictions.geojson`, `ground_truth.geojson`, `extent.geojson`: geographic

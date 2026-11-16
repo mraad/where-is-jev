@@ -45,11 +45,11 @@ def select_audit(rows, per_group=4):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--screen", type=Path, default=Path("results/screen"))
-    parser.add_argument("--out", type=Path, default=Path("results/sam3"))
+    parser.add_argument("--screen", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--audit", action="store_true", help="12 spatially separated diagnostic patches")
     parser.add_argument("--all-valid", action="store_true", help="Ungated baseline on every valid patch")
-    parser.add_argument("--prompt", default="storage tank")
+    parser.add_argument("--prompt", required=True)
     parser.add_argument("--threshold", type=float, default=0.3)
     parser.add_argument("--image", type=Path, help="Override source path when running on another host")
     parser.add_argument("--model", default="facebook/sam3", help="Cached model ID or local checkpoint directory")
