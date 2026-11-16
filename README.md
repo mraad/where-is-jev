@@ -34,28 +34,34 @@ See [implementation, data contract, reproduction and evidence](experiments/READM
 
 `app/` is a vanilla JavaScript map on ArcGIS Maps SDK for JavaScript 5.2.2
 (loaded from `https://js.arcgis.com/5.2.2/`; that release's core reports build
-5.2.1). It needs no API key and no basemap. It shows:
+5.2.1). It needs no API key and no basemap. It walks through the featured run
+in four steps, with Back/Next buttons. Each step shows only its own layers:
 
-- the 512 px gate tiles from `Tanks.tif`, colored by one model's decision or the
-  reference label, with an option to show only disagreements;
-- the SAM 3 "round storage tanks" detections after the Qwen3-VL 32B gate,
-  TP/FP at IoU >= 0.5, missed labels, and a minimum-score slider;
-- the Kev filter pilot candidates in the spatial test band, kept or dropped by
-  each filter's recorded threshold.
+1. the photo and the evaluation `Extent` (85 labeled tanks);
+2. the 512 px tiles the Qwen3-VL 32B gate routed to SAM 3 (235 contains,
+   30 partial; 471 "no tank" tiles hidden);
+3. the SAM 3 "round storage tanks" outlines after mask suppression (224
+   inside the extent);
+4. the same outlines scored at IoU >= 0.5: 82 TP, 142 FP, 3 missed labels.
 
-The side panel recomputes the metrics in the browser. On load it checks them
-against `summary.json`, which holds the recorded Python results, and reports a
-mismatch. Score-slider counts are exact because matching assigns labels in
-descending score order, so a score cut only truncates it. Tile metrics are
-patch-level presence on the 513 tiles of the multi-size grid wholly inside the
-extent, not the 144-patch comparison above.
+The page reads every count from `summary.json`, the recorded Python
+evaluation that the same export writes beside the layers.
+
+Simplified on 2026-11-16: the earlier version (model selector, disagreement
+filter, score slider, Kev pilot layer) was too dense to explain. It also showed
+the superseded box-NMS detections (81 / 246 / 4), because `export_web.py`
+defaulted to `results/sam3_round_validation`, and colored tiles by the Qwen 4B
+gate. `--validation` and `--gate` are now required, and the gate is written to
+`summary.json`; the export stops if `--gate` decided "no tank" on a tile that
+has detections. The Kev pilot layers are no longer exported.
 
 `app/data/` is generated and ignored, because it holds imagery derived from the
 source TIFF:
 
 ```bash
 .venv/bin/python export_web.py --image ~/Documents/ArcGIS/Projects/Tanks/Tanks.tif \
-  --tiles-gpkg results/tiles_validation/tank_tiles_validation.gpkg --out app/data
+  --tiles-gpkg results/tiles_validation/tank_tiles_validation.gpkg \
+  --validation results/sam3_round_ios_validation --gate qwen32b --out app/data
 python3 -m http.server -d app 8000   # open http://localhost:8000
 ```
 
@@ -209,7 +215,7 @@ with the same six layers and fields as the 32B package described below
 bash run_gc1.sh 32 results/sam3_round_qwen4b_512 results/sam3_gate512_qwen4b "round storage tanks"
 # Locally, after copying both folders back:
 T=~/Documents/ArcGIS/Projects/Tanks R=results/sam3_round_qwen4b_512 V=results/sam3_round_qwen4b_validation
-.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged/detections.geojson --image $T/Tanks.tif --out $V
+.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged/detections.geojson --out $V
 .venv/bin/python to_gpkg.py $R/tank_detections_sam3_round_qwen4b_512.gpkg \
   detections=$R/merged/detections.geojson raw_detections=$R/merged/raw_detections.geojson \
   gate_tiles=results/sam3_gate512_qwen4b/patches.geojson evaluated_detections=$V/predictions.geojson \
@@ -375,7 +381,9 @@ Local records: `results/sam3_gate512_qwen32b/`, `results/sam3_round_qwen32b_512/
 (worker outputs, previews, logs, utilization, package freeze; `merged/` box
 NMS, `merged_ios/` and `merge_ios.log` mask suppression) and
 `results/sam3_round_ios_validation/` (superseded: `results/sam3_round_validation/`)
-with summary, CSVs, `validation_overview.jpg` and `missed_tanks.jpg`.
+with summary, CSVs, `validation_overview.jpg` and `missed_tanks.jpg`. Those two
+previews came from `evaluate.py --image`, removed on 2026-11-16; `figures.py`
+now renders the same views (`detections.jpg`, `missed_tanks.jpg`).
 
 ```bash
 # gc1, inside tmux, after the multi-size Qwen32B run:
@@ -387,7 +395,7 @@ bash run_gc1.sh 32 results/sam3_round_qwen32b_512 results/sam3_gate512_qwen32b "
   --screen results/sam3_gate512_qwen32b --out results/sam3_round_qwen32b_512/merged_ios
 # Locally, after copying both folders back:
 T=~/Documents/ArcGIS/Projects/Tanks R=results/sam3_round_qwen32b_512 V=results/sam3_round_ios_validation
-.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged_ios/detections.geojson --image $T/Tanks.tif --out $V
+.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --detections $R/merged_ios/detections.geojson --out $V
 .venv/bin/python to_gpkg.py $R/tank_detections_sam3_round_qwen32b_512_ios.gpkg \
   detections=$R/merged_ios/detections.geojson raw_detections=$R/merged_ios/raw_detections.geojson \
   gate_tiles=results/sam3_gate512_qwen32b/patches.geojson evaluated_detections=$V/predictions.geojson \
@@ -1176,14 +1184,14 @@ Run again with a fresh output directory:
 .venv/bin/python evaluate.py \
   --gdb ~/Documents/ArcGIS/Projects/Tanks/Tanks.gdb \
   --detections results/gc1_gpu/merged/detections.geojson \
-  --image ~/Documents/ArcGIS/Projects/Tanks/20150520_075001.tif \
   --out results/new_validation
 ```
 
 Final results are in **`results/validation_inside_extent/`**:
 
 - `summary.json`: counts, metrics, explicit extent-only scope note, input prediction hash.
-- `validation_overview.jpg`: green matched labels, red missed labels, cyan
+- `validation_overview.jpg` (from the since-removed `evaluate.py --image`; use
+  `figures.py` today): green matched labels, red missed labels, cyan
   predictions, and yellow extent, using the IoU ≥ 0.50 assignment.
 - `missed_tanks.jpg`: close-ups of all five labels missed at IoU ≥ 0.50.
 - `predictions.geojson`, `ground_truth.geojson`, `extent.geojson`: geographic

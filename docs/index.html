@@ -221,7 +221,7 @@ Answer with exactly one letter: A, B, or C.</pre>
   <li>Set the data folder.
     <pre>T=~/Documents/ArcGIS/Projects/Tanks</pre></li>
   <li>Evaluate the detections.
-    <pre>.venv/bin/python evaluate.py --gdb $T/Tanks.gdb --image $T/Tanks.tif \
+    <pre>.venv/bin/python evaluate.py --gdb $T/Tanks.gdb \
   --detections results/sam3_qwen32b_512/merged/detections.geojson --out results/sam3_qwen32b_validation</pre></li>
   <li>Make the GeoPackage.
     <pre>.venv/bin/python to_gpkg.py results/sam3_qwen32b_512/tank_detections.gpkg \

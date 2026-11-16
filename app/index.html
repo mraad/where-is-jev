@@ -5,7 +5,7 @@
 <link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Where Is Jev Map</title>
-<meta name="description" content="Interactive map of training-free storage tank detection: VLM tile gate, SAM 3 detections and the Kev filter pilot.">
+<meta name="description" content="Step-by-step map of training-free storage tank detection: one aerial photo, a vision-language tile check, SAM 3 outlines and a check against hand labels.">
 <script type="module" src="https://js.arcgis.com/5.2.2/"></script>
 <style>
   :root { --bg: #ffffff; --fg: #1a1a1a; --muted: #555555; --line: #d0d0d0; --panel: #f6f6f4; --accent: #3e5c33; }
@@ -14,69 +14,44 @@
   }
   :root[data-theme="dark"] { --bg: #161816; --fg: #e8e8e4; --muted: #a8aba4; --line: #3a3d38; --panel: #1f221e; --accent: #9cc28a; }
   html, body { height: 100%; margin: 0; }
-  body { display: flex; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: flex; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
   arcgis-map { flex: 1; min-width: 0; }
-  aside { width: 340px; overflow-y: auto; padding: 14px 16px; background: var(--panel); border-left: 1px solid var(--line); box-sizing: border-box; }
-  h1 { font-size: 1.25em; margin: 0 0 2px; }
-  h2 { font-size: 1em; margin: 18px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
-  p { margin: 4px 0 8px; }
-  .muted { color: var(--muted); font-size: 0.88em; }
-  label { display: block; margin: 6px 0; }
-  select, input[type="range"] { width: 100%; box-sizing: border-box; margin-top: 2px; accent-color: var(--accent); }
-  table { width: 100%; border-collapse: collapse; font-size: 0.9em; font-variant-numeric: tabular-nums; }
-  td { padding: 2px 0; border-bottom: 1px solid var(--line); }
-  td:last-child { text-align: right; }
+  aside { width: 360px; display: flex; flex-direction: column; overflow-y: auto; padding: 18px 20px; background: var(--panel); border-left: 1px solid var(--line); box-sizing: border-box; }
+  h1 { font-size: 1.1em; margin: 0; color: var(--muted); font-weight: 600; }
+  .count { color: var(--muted); font-size: 0.9em; margin: 14px 0 2px; }
+  h2 { font-size: 1.4em; line-height: 1.25; margin: 0 0 10px; }
+  p { margin: 0 0 10px; }
+  .key { list-style: none; padding: 0; margin: 6px 0 12px; }
+  .key li { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  .key b { font-variant-numeric: tabular-nums; min-width: 2.5em; text-align: right; }
+  .swatch { width: 18px; height: 14px; flex: none; border: 2px solid; box-sizing: border-box; }
+  nav { display: flex; gap: 8px; margin-top: auto; padding-top: 16px; }
+  button { flex: 1; font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .muted { color: var(--muted); font-size: 0.85em; }
   .error { color: #c62828; }
   @media (max-width: 600px) {
     body { flex-direction: column; }
-    arcgis-map { flex: none; height: 60vh; }
-    aside { width: 100%; border-left: 0; border-top: 1px solid var(--line); }
+    arcgis-map { flex: none; height: 55vh; }
+    aside { width: 100%; border-left: 0; border-top: 1px solid var(--line); padding: 14px 16px; }
   }
 </style>
 </head>
 <body>
 <arcgis-map>
   <arcgis-zoom slot="top-left"></arcgis-zoom>
-  <arcgis-expand slot="top-right" expand-tooltip="Layers" expanded><arcgis-layer-list></arcgis-layer-list></arcgis-expand>
-  <arcgis-expand slot="bottom-left" expand-tooltip="Legend"><arcgis-legend></arcgis-legend></arcgis-expand>
 </arcgis-map>
 <aside>
-  <h1>Where Is Jev?</h1>
-  <p class="muted">Storage tanks in one 0.5 m aerial scene, found with pretrained models and no task training. Layers and legend open from the map corners.</p>
-
-  <h2>1. Tile gate (512 px, 50% overlap)</h2>
-  <label>Decision shown
-    <select id="tile-model">
-      <option value="qwen4b">Qwen3-VL 4B</option>
-      <option value="qwen32b">Qwen3-VL 32B</option>
-      <option value="nemotron12b">Nemotron Nano v2 VL 12B</option>
-      <option value="nemotron30b">Nemotron 3 Nano Omni 30B</option>
-      <option value="truth">Reference labels</option>
-    </select>
-  </label>
-  <label><input type="checkbox" id="tile-extent" checked> Only tiles wholly inside the extent</label>
-  <label><input type="checkbox" id="tile-disagree"> Only tiles where the model disagrees with the reference</label>
-  <table id="tile-metrics"></table>
-
-  <h2>2. SAM 3 detections</h2>
-  <label>Minimum score: <output id="score-out"></output>
-    <input type="range" id="score" min="0" max="1" step="0.01" value="0">
-  </label>
-  <table id="det-metrics"></table>
-
-  <h2>3. Kev filter pilot (test band)</h2>
-  <label>Filter
-    <select id="kev-model">
-      <option value="vision_linear">Linear image classifier</option>
-      <option value="kev_zero_shot">Image-Kev, untuned</option>
-      <option value="kev_tuned_head">Image-Kev, tuned head</option>
-      <option value="unfiltered">No filter</option>
-    </select>
-  </label>
-  <table id="kev-metrics"></table>
-
-  <h2>Read with care</h2>
-  <p class="muted">Tile metrics are patch-level presence (complete or partial counts as positive) on tiles wholly inside the extent; they are not tank-instance metrics. Detection status uses one-to-one matching at IoU &ge; 0.5. One scene; labels are assumed complete inside the extent. The Kev pilot is supervised, uses geometry-derived labels and one spatial test band.</p>
+  <h1>Where Is Jev? Finding storage tanks with no training</h1>
+  <p class="count" id="count"></p>
+  <h2 id="title"></h2>
+  <div id="body"></div>
+  <ul class="key" id="key"></ul>
+  <nav>
+    <button id="back">Back</button>
+    <button id="next" class="primary">Next</button>
+  </nav>
   <p class="muted" id="status">Loading&hellip;</p>
 </aside>
 <script type="module" src="main.js"></script>

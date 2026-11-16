@@ -101,69 +101,11 @@ def write_geojson(path, records, crs):
     path.write_text(json.dumps(dict(type="FeatureCollection", features=features), allow_nan=False))
 
 
-def render_validation(image_path, out, predictions, truth, extent, crs):
-    import rasterio
-    from PIL import Image, ImageDraw
-    from rasterio.enums import Resampling
-    from rasterio.windows import Window, from_bounds
-
-    with rasterio.open(image_path) as src:
-        rows = [(project(p["geometry"], crs, src.crs), "#00cfff") for p in predictions]
-        rows += [(project(g["geometry"], crs, src.crs),
-                  "#ff4949" if g["status"] == "FN" else "#44ff66") for g in truth]
-        if extent is not None:
-            rows.append((project(extent, crs, src.crs), "#ffe140"))
-
-        def panel(region, width):
-            view = project(region, crs, src.crs)
-            bounds = view.bounds
-            window = from_bounds(*bounds, transform=src.transform).round_offsets().round_lengths()
-            window = window.intersection(Window(0, 0, src.width, src.height))
-            height = max(1, round(width * window.height / window.width))
-            rgb = src.read([1, 2, 3], window=window, out_shape=(3, height, width),
-                           resampling=Resampling.bilinear).transpose(1, 2, 0)
-            image = Image.fromarray(rgb)
-            draw = ImageDraw.Draw(image)
-            inverse = ~src.window_transform(window)
-            for geometry, color in rows:
-                if not geometry.intersects(view):
-                    continue
-                polygons = [geometry] if geometry.geom_type == "Polygon" else geometry.geoms
-                for polygon in polygons:
-                    for ring in [polygon.exterior, *polygon.interiors]:
-                        pixels = [inverse * point[:2] for point in ring.coords]
-                        draw.line([(x * width / window.width, y * height / window.height)
-                                   for x, y in pixels], fill=color, width=2)
-            return image
-
-        region = extent if extent is not None else unary_union([g["geometry"] for g in truth]).envelope
-        overview = panel(region.buffer(40), 1600)
-        draw = ImageDraw.Draw(overview)
-        draw.rectangle((0, 0, overview.width, 26), fill="black")
-        draw.text((8, 8), "Extent only | IoU >= 0.50 | Green: matched label | Red: missed label | Cyan: predictions | Yellow: extent",
-                  fill="white")
-        overview.save(out / "validation_overview.jpg", quality=95)
-        missed = [g for g in truth if g["status"] == "FN"]
-        if missed:
-            sheet = Image.new("RGB", (min(5, len(missed)) * 300, math.ceil(len(missed) / 5) * 330), "#171717")
-            draw = ImageDraw.Draw(sheet)
-            for i, g in enumerate(missed):
-                x1, y1, x2, y2 = g["geometry"].bounds
-                half = max(x2-x1, y2-y1) / 2 + 45
-                region = g["geometry"].centroid.buffer(half).envelope
-                chip = panel(region, 300).resize((300, 300))
-                x, y = (i % 5) * 300, (i // 5) * 330
-                sheet.paste(chip, (x, y))
-                draw.text((x+5, y+307), f'OBJECTID {g["id"]} | best IoU {g["best_iou"]:.3f}', fill="white")
-            sheet.save(out / "missed_tanks.jpg", quality=95)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gdb", type=Path, required=True)
-    parser.add_argument("--detections", type=Path, default=Path("results/gc1_gpu/merged/detections.geojson"))
-    parser.add_argument("--out", type=Path, default=Path("results/validation"))
-    parser.add_argument("--image", type=Path, help="Optional source RGB TIFF for validation previews")
+    parser.add_argument("--detections", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     if args.out.exists() and any(args.out.iterdir()):
         parser.error("Output directory is not empty; choose a new --out")
@@ -266,8 +208,6 @@ def main():
         writer.writeheader()
         writer.writerows({k: r[k] for k in fields} for r in truth)
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False))
-    if args.image:
-        render_validation(args.image, args.out, predictions, truth, extent, metric_crs)
     print(json.dumps(summary, indent=2))
 
 

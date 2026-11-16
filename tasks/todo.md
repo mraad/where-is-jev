@@ -1,3 +1,15 @@
+# Audit fixes (2026-11-16)
+
+From the ponytail audit; user asked to fix all findings and the nice-to-haves.
+
+- [x] 1. Remove stale run defaults: `evaluate.py --detections/--out`, `detect.py --screen/--out/--prompt`, `merge_shards.py --screen/--out` required; `benchmark_gc1.sh` passes `--screen`
+- [x] 2. `export_web.py`: drop the Kev export (`kev()`, `band()`, args, summary block, tests); regenerate `app/data/`
+- [x] 3. `export_web.py`: reject a `--gate` that decided "no tank" on a tile with detections; test
+- [x] 4. `evaluate.py`: delete `render_validation`/`--image` (`figures.py` already renders the overview and `missed_tanks.jpg`); update README/docs commands
+- [x] 5. `.gitignore`: `data/*.tif`
+- [x] 6. `screen.py`: invalid size/overlap gives a parser error, not a traceback
+- [x] Verify: tests, export run, app render, README/CLAUDE/AGENTS updated
+
 # Documentation figures and HTML project overview
 
 Figures come from finished outputs only (no GPU): Qwen3-VL 32B gate, SAM 3 "round storage tanks", mask suppression, evaluation inside `Extent`. Example tiles are picked by fixed rules stated in the captions, not by hand.

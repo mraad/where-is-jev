@@ -54,11 +54,14 @@ class GateImageTests(unittest.TestCase):
             (root / "screen").mkdir()
             (root / "screen" / "summary.json").write_text(json.dumps(dict(
                 source=str(root / "image.tif"), image_sha256="0" * 64, shape=[1, 1])))
-            argv = ["detect", "--screen", str(root / "screen"), "--all-valid", "--out", str(root / "out")]
+            argv = ["detect", "--screen", str(root / "screen"), "--all-valid", "--prompt", "tank",
+                    "--out", str(root / "out")]
+            stderr = io.StringIO()
             with mock.patch("sys.argv", argv), mock.patch("detect.Sam3Model") as model, \
-                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
                 main()
             model.from_pretrained.assert_not_called()
+            self.assertIn("is not the image the gate was prepared from", stderr.getvalue())
 
 
 if __name__ == "__main__":

@@ -119,8 +119,8 @@ def merge_shards(shards, screen, out, num_shards=4):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shards", type=Path, required=True)
-    parser.add_argument("--screen", type=Path, default=Path("results/screen"))
-    parser.add_argument("--out", type=Path, default=Path("results/gc1_merged"))
+    parser.add_argument("--screen", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--num-shards", type=int, default=4)
     args = parser.parse_args()
     summary = merge_shards(args.shards, args.screen, args.out, args.num_shards)

@@ -1,193 +1,114 @@
-// Interactive map of the tank experiment. Data comes from export_web.py (app/data/).
-const LABELS = ["Contains a tank", "Partially contains a tank", "Does not contain a tank"];
-const MODELS = ["qwen4b", "qwen32b", "nemotron12b", "nemotron30b"];
-const KEV_MODELS = ["vision_linear", "kev_zero_shot", "kev_tuned_head", "unfiltered"];
-const COLORS = { complete: [61, 220, 132], partial: [255, 176, 32], tp: [61, 220, 132], fp: [255, 48, 48],
-  missed: [56, 200, 255], extent: [255, 225, 64], band: [255, 61, 217], dropped: [176, 176, 176] };
+// Step-by-step map of the tank experiment. Data comes from export_web.py (app/data/).
+// Each step shows only its own layers, so every click changes what is on the map.
+const LABELS = ["Contains a tank", "Partially contains a tank", "Does not contain a tank"]; // patch_decisions.LABELS
+const COLORS = { extent: [255, 225, 64], complete: [61, 220, 132], partial: [255, 176, 32],
+  outline: [255, 255, 255], tp: [61, 220, 132], fp: [255, 48, 48], missed: [56, 200, 255] };
 const $ = (id) => document.getElementById(id);
 
-// --- Metrics (pure functions over feature properties) ---
+const fill = (rgb, alpha) => ({ type: "simple-fill", color: [...rgb, alpha], outline: { color: rgb, width: 1 } });
+const outline = (rgb, width) => ({ type: "simple-fill", color: [0, 0, 0, 0], outline: { color: rgb, width } });
 
-// Same definition as compare_backbones.metrics: presence = complete or partial.
-export function tileMetrics(rows, model) {
-  const matrix = LABELS.map(() => [0, 0, 0]);
-  for (const r of rows) matrix[LABELS.indexOf(r.truth)][LABELS.indexOf(r[model])] += 1;
-  const tp = matrix[0][0] + matrix[0][1] + matrix[1][0] + matrix[1][1];
-  const fp = matrix[2][0] + matrix[2][1];
-  const fn = matrix[0][2] + matrix[1][2];
-  return { tp, fp, fn, accuracy: (matrix[0][0] + matrix[1][1] + matrix[2][2]) / rows.length,
-    precision: tp / (tp + fp), recall: tp / (tp + fn) };
+// The story. Each step: which layers are visible, what to say, and a color key with counts.
+function steps(n) {
+  return [
+    { title: "One aerial photo", layers: ["extent"],
+      body: `<p>This is one aerial photo from 2015. Each pixel is 0.5 m.</p>
+        <p>Inside the yellow box, a person outlined every storage tank by hand: ${n.labels} tanks.
+        We use those outlines only to check the result at the end.</p>
+        <p>The goal: find the tanks with models that were never trained on tanks.</p>`,
+      key: [[COLORS.extent, "", "Area with hand-labeled tanks"]] },
+    { title: "Step 1: Ask a model about each tile", layers: ["extent", "tiles"],
+      body: `<p>We cut the photo into ${n.tiles} square tiles of 256 m. Each tile overlaps its neighbors by half,
+        so a tank cut by one tile edge is usually whole in a neighbor tile.</p>
+        <p>For each tile, a vision-language model (${n.model}) answers one question:
+        does this tile contain a tank, part of a tank, or no tank?</p>
+        <p>${n.skipped} tiles got “no tank” and are not shown. Only the colored tiles go to the next step.</p>`,
+      key: [[COLORS.complete, n.complete, "Contains a tank"], [COLORS.partial, n.partial, "Part of a tank"]] },
+    { title: "Step 2: Outline the tanks", layers: ["extent", "detections"],
+      body: `<p>A segmentation model (SAM 3) gets each kept tile and the text “round storage tanks”.
+        It draws an outline around every object that matches.</p>
+        <p>Tiles overlap, so one tank is often outlined several times. We remove those duplicates.</p>
+        <p>${n.detections} outlines are inside the yellow box.</p>`,
+      key: [[COLORS.outline, n.detections, "Outline from SAM 3"]] },
+    { title: "Step 3: Check against the hand labels", layers: ["extent", "detections", "missed"], scored: true,
+      body: `<p>Now we compare each outline with the hand-drawn tanks.
+        An outline counts as correct when it covers the same tank closely (IoU ≥ 0.5).</p>
+        <p>The method found <strong>${n.tp} of ${n.labels}</strong> tanks (${n.recall}).
+        It also drew ${n.fp} extra outlines, so ${n.precision} of all outlines are tanks.</p>
+        <p class="muted">Many extra outlines are other round objects, or tanks that nobody labeled;
+        they were not checked one by one. All ${n.labels} tanks are touched by some outline; the
+        ${n.fn} missed ones fail only the shape test. One photo only; nothing was tuned to the labels.</p>`,
+      key: [[COLORS.tp, n.tp, "Correct: matches a labeled tank"], [COLORS.fp, n.fp, "Extra: does not match a labeled tank"],
+        [COLORS.missed, n.fn, "Missed labeled tank"]] },
+  ];
 }
 
-// Matching is one-to-one in descending score, so a score cut only truncates it: counts stay exact.
-export function detectionMetrics(rows, threshold, labels) {
-  const kept = rows.filter((r) => r.score >= threshold);
-  const tp = kept.filter((r) => r.status === "TP").length;
-  return { tp, fp: kept.length - tp, fn: labels - tp };
-}
-
-// shortcut: uses each candidate's original TP flag; if a filter drops a TP and keeps another candidate on the
-// same tank, the pilot re-matches it as TP here counted FP. Absent in pilot-v1 (selfCheck would fail); export
-// per-filter matches from kev_filter.evaluate_detections if a new run trips it.
-export function kevMetrics(rows, model, thresholds, labels) {
-  const kept = rows.filter((r) => r.split === "test" && (model === "unfiltered" || r[model] >= thresholds[model]));
-  const tp = kept.filter((r) => r.original_tp).length;
-  return { tp, fp: kept.length - tp, fn: labels - tp };
-}
-
-const pct = (x) => (Number.isFinite(x) ? `${(100 * x).toFixed(1)}%` : "n/a");
-
-function table(el, m) {
-  const rows = [["True positives", m.tp], ["False positives", m.fp], ["False negatives", m.fn],
-    ["Precision", pct(m.tp / (m.tp + m.fp))], ["Recall", pct(m.tp / (m.tp + m.fn))]];
-  if (m.accuracy !== undefined) rows.push(["Three-way agreement", pct(m.accuracy)]);
-  el.replaceChildren(...rows.map(([k, v]) => {
-    const tr = document.createElement("tr");
-    tr.append(Object.assign(document.createElement("td"), { textContent: k }),
-      Object.assign(document.createElement("td"), { textContent: v }));
-    return tr;
-  }));
-}
-
-// Fails loudly if the browser numbers drift from the recorded Python results.
-function selfCheck(tiles, detections, kev, summary) {
-  const same = (a, b) => a.tp === b.tp && a.fp === b.fp && a.fn === b.fn;
-  const failures = [];
-  for (const model of MODELS) {
-    const s = summary.tiles[model];
-    const m = tileMetrics(tiles, model);
-    if (!same(m, { tp: s.presence_tp, fp: s.presence_fp, fn: s.presence_fn }) || Math.abs(m.accuracy - s.accuracy) > 1e-9)
-      failures.push(`tiles ${model}`);
-  }
-  if (!same(detectionMetrics(detections, 0, summary.detections.ground_truth_evaluated), summary.detections.iou_0_50))
-    failures.push("detections");
-  for (const model of KEV_MODELS) {
-    if (!same(kevMetrics(kev, model, summary.kev.thresholds, summary.kev.test_reference_tanks),
-      summary.kev.detection_evaluation[model])) failures.push(`kev ${model}`);
-  }
-  console.assert(failures.length === 0, "Metric self-check failed:", failures);
-  return failures;
-}
-
-// --- Map ---
-
-const fill = (rgb, alpha) => ({ type: "simple-fill", color: [...rgb, alpha], outline: { color: rgb, width: 1.2 } });
-const outline = (rgb, width = 1.5, style = "solid") =>
-  ({ type: "simple-fill", color: [0, 0, 0, 0], outline: { color: rgb, width, style } });
-
-function tileRenderer(field) {
-  return { type: "unique-value", field, legendOptions: { title: "Tile decision" }, uniqueValueInfos: [
-    { value: LABELS[0], label: "Complete tank", symbol: fill(COLORS.complete, 0.18) },
-    { value: LABELS[1], label: "Part of a tank", symbol: fill(COLORS.partial, 0.18) }] };
-}
-
-function kevRenderer(model, thresholds) {
-  const kept = model === "unfiltered" ? "true" : `$feature.${model} >= ${thresholds[model]}`;
-  return { type: "unique-value", legendOptions: { title: "Kev filter" },
-    valueExpression: `IIf(${kept}, IIf($feature.original_tp == 1, "kept-tp", "kept-fp"), IIf($feature.original_tp == 1, "dropped-tp", "dropped-fp"))`,
-    uniqueValueInfos: [
-      { value: "kept-tp", label: "Kept, true tank", symbol: outline(COLORS.tp, 2) },
-      { value: "kept-fp", label: "Kept, false alarm", symbol: outline(COLORS.fp, 2) },
-      { value: "dropped-tp", label: "Dropped, true tank", symbol: outline(COLORS.tp, 2, "dash") },
-      { value: "dropped-fp", label: "Dropped, false alarm", symbol: outline(COLORS.dropped, 1, "dash") }] };
-}
+const pct = (x) => `${(100 * x).toFixed(1)}%`;
 
 async function main() {
-  const [ArcGISMap, Extent, MediaLayer, ImageElement, ExtentAndRotationGeoreference, GeoJSONLayer, kernel] = await Promise.all([
+  const modules = Promise.all([
     "@arcgis/core/Map.js", "@arcgis/core/geometry/Extent.js", "@arcgis/core/layers/MediaLayer.js",
     "@arcgis/core/layers/support/ImageElement.js", "@arcgis/core/layers/support/ExtentAndRotationGeoreference.js",
-    "@arcgis/core/layers/GeoJSONLayer.js", "@arcgis/core/kernel.js"].map((m) => $arcgis.import(m)));
-  const load = (name) => fetch(`data/${name}`).then((r) => {
-    if (!r.ok) throw new Error(`data/${name}: HTTP ${r.status}. Run export_web.py first.`);
-    return r.json();
-  });
-  const [summary, tilesFc, detectionsFc, kevFc, truthFc] = await Promise.all(
-    ["summary.json", "tiles_512.geojson", "detections.geojson", "kev.geojson", "truth.geojson"].map(load));
-  const props = (fc) => fc.features.map((f) => f.properties);
-  const tiles = props(tilesFc).filter((r) => r.in_extent === 1);
-  const detections = props(detectionsFc);
-  const kev = props(kevFc);
-  const scoreById = new Map(detections.map((r) => [r.id, r.score]));
-  const matchedTruth = props(truthFc).filter((r) => r.status === "matched");
+    "@arcgis/core/layers/GeoJSONLayer.js"].map((m) => $arcgis.import(m)));
+  const response = await fetch("data/summary.json");
+  if (!response.ok) throw new Error(`data/summary.json: HTTP ${response.status}. Run export_web.py first.`);
+  const summary = await response.json();
+  const [ArcGISMap, Extent, MediaLayer, ImageElement, ExtentAndRotationGeoreference, GeoJSONLayer] = await modules;
+
+  // All counts are the recorded Python results, so the page cannot drift from them.
+  const gate = summary.tiles[summary.gate];
+  const tileCounts = JSON.parse(gate.all_tile_counts);
+  const { tp, fp, fn } = summary.detections.iou_0_50;
+  const n = { labels: summary.detections.ground_truth_evaluated, model: gate.checkpoint.split("/").pop(), tiles: gate.tiles,
+    complete: tileCounts[LABELS[0]] ?? 0, partial: tileCounts[LABELS[1]] ?? 0, skipped: tileCounts[LABELS[2]] ?? 0,
+    detections: tp + fp, tp, fp, fn, recall: pct(tp / (tp + fn)), precision: pct(tp / (tp + fp)) };
 
   const s = summary.scene;
   const extent = new Extent({ xmin: s.xmin, ymin: s.ymin, xmax: s.xmax, ymax: s.ymax, spatialReference: { wkid: s.wkid } });
-  const geojson = (name, title, options) => new GeoJSONLayer({ url: `data/${name}`, title, ...options });
-
-  const scene = new MediaLayer({ title: "Aerial scene (2015)", listMode: "hide",
+  const geojson = (name, options) => new GeoJSONLayer({ url: `data/${name}`, visible: false, ...options });
+  const plain = { type: "simple", symbol: outline(COLORS.outline, 1.5) };
+  const scored = { type: "unique-value", field: "status", uniqueValueInfos: [
+    { value: "TP", symbol: outline(COLORS.tp, 2) }, { value: "FP", symbol: outline(COLORS.fp, 1.5) }] };
+  const layers = {
+    tiles: geojson("tiles_512.geojson", { definitionExpression: `${summary.gate} <> '${LABELS[2]}'`,
+      renderer: { type: "unique-value", field: summary.gate, uniqueValueInfos: [
+        { value: LABELS[0], symbol: fill(COLORS.complete, 0.15) },
+        { value: LABELS[1], symbol: fill(COLORS.partial, 0.15) }] } }),
+    detections: geojson("detections.geojson", { renderer: plain }),
+    missed: geojson("truth.geojson", { definitionExpression: "status = 'FN'", renderer: { type: "simple", symbol: outline(COLORS.missed, 3) } }),
+    extent: geojson("extent.geojson", { renderer: { type: "simple", symbol: outline(COLORS.extent, 2.5) } }),
+  };
+  const scene = new MediaLayer({
     source: [new ImageElement({ image: "data/scene.jpg", georeference: new ExtentAndRotationGeoreference({ extent }) })] });
-  const tileLayer = geojson("tiles_512.geojson", "Gate tiles", {
-    renderer: tileRenderer("qwen4b"), outFields: ["*"],
-    popupTemplate: { title: "Tile {patch_id}", content: [{ type: "fields", fieldInfos: ["truth", ...MODELS].map((fieldName) => ({ fieldName })) }] } });
-  const detectionLayer = geojson("detections.geojson", "SAM 3 detections", {
-    outFields: ["*"],
-    renderer: { type: "unique-value", field: "status", uniqueValueInfos: [
-      { value: "TP", label: "True positive (IoU ≥ 0.5)", symbol: outline(COLORS.tp, 2) },
-      { value: "FP", label: "False positive", symbol: outline(COLORS.fp, 1.5) }] },
-    popupTemplate: { title: "Detection {id}: {status}", content: [{ type: "fields", fieldInfos: [
-      { fieldName: "score", format: { places: 3 } }, { fieldName: "best_iou", label: "Best IoU with a label", format: { places: 2 } },
-      { fieldName: "patch" }] }] } });
-  const missedLayer = geojson("truth.geojson", "Missed labels", {
-    definitionExpression: "status = 'FN'", renderer: { type: "simple", label: "Reference tank not matched", symbol: outline(COLORS.missed, 2.5) } });
-  const labelLayer = geojson("truth.geojson", "Reference labels", { visible: false,
-    renderer: { type: "simple", label: "Reference tank", symbol: outline([255, 255, 255], 1, "dash") } });
-  const extentLayer = geojson("extent.geojson", "Evaluation extent", {
-    renderer: { type: "simple", label: "Extent", symbol: outline(COLORS.extent, 2.5) } });
-  const kevLayer = geojson("kev.geojson", "Kev pilot candidates", { visible: false, outFields: ["*"],
-    definitionExpression: "split = 'test'", renderer: kevRenderer("vision_linear", summary.kev.thresholds),
-    popupTemplate: { title: "Candidate {id}", content: [{ type: "fields", fieldInfos: ["original_tp", ...KEV_MODELS.slice(0, 3)].map((fieldName) => ({ fieldName, format: { places: 3 } })) }] } });
-  const bandLayer = geojson("kev_band.geojson", "Kev test band", { visible: false,
-    renderer: { type: "simple", label: "Spatial test band", symbol: outline(COLORS.band, 2, "dash") } });
 
   const mapEl = document.querySelector("arcgis-map");
-  mapEl.map = new ArcGISMap({ layers: [scene, tileLayer, labelLayer, detectionLayer, missedLayer, kevLayer, bandLayer, extentLayer] });
+  mapEl.map = new ArcGISMap({ layers: [scene, ...Object.values(layers)] });
   mapEl.extent = extent;
   await mapEl.viewOnReady();
-  if (matchMedia("(max-width: 600px)").matches) document.querySelector('arcgis-expand[slot="top-right"]').expanded = false;
   mapEl.constraints = { geometry: extent.clone().expand(1.5), minScale: 60000 };
 
-  // --- Controls ---
-  const tileQuery = () => {
-    const model = $("tile-model").value;
-    const parts = [];
-    if ($("tile-extent").checked) parts.push("in_extent = 1");
-    if ($("tile-disagree").checked && model !== "truth") parts.push(`${model} <> truth`, "in_extent = 1");
-    tileLayer.renderer = tileRenderer(model);
-    tileLayer.definitionExpression = parts.join(" AND ");
-    $("tile-disagree").disabled = model === "truth";
-    if (model === "truth") $("tile-metrics").replaceChildren();
-    else table($("tile-metrics"), tileMetrics(tiles, model));
+  const story = steps(n);
+  let at = 0;
+  const show = () => {
+    const step = story[at];
+    for (const [name, layer] of Object.entries(layers)) layer.visible = step.layers.includes(name);
+    layers.detections.renderer = step.scored ? scored : plain;
+    $("count").textContent = `${at + 1} of ${story.length}`;
+    $("title").textContent = step.title;
+    $("body").innerHTML = step.body;
+    $("key").replaceChildren(...step.key.map(([rgb, count, label]) => {
+      const li = document.createElement("li");
+      li.append(Object.assign(document.createElement("span"), { className: "swatch", style: `border-color:rgb(${rgb})` }),
+        Object.assign(document.createElement("b"), { textContent: count }), label);
+      return li;
+    }));
+    $("back").disabled = at === 0;
+    $("next").disabled = at === story.length - 1;
   };
-  const scoreQuery = () => {
-    const t = Number($("score").value);
-    $("score-out").value = t.toFixed(2);
-    detectionLayer.definitionExpression = `score >= ${t}`;
-    // A cut only truncates the score-ordered matching, so a label is missed once its match falls below it.
-    const dropped = matchedTruth.filter((r) => scoreById.get(r.matched_prediction_id) < t).map((r) => r.id);
-    missedLayer.definitionExpression = dropped.length ? `status = 'FN' OR id IN (${dropped.join(",")})` : "status = 'FN'";
-    table($("det-metrics"), detectionMetrics(detections, t, summary.detections.ground_truth_evaluated));
-  };
-  const kevQuery = () => {
-    const model = $("kev-model").value;
-    kevLayer.renderer = kevRenderer(model, summary.kev.thresholds);
-    kevLayer.visible = bandLayer.visible = true;
-    table($("kev-metrics"), kevMetrics(kev, model, summary.kev.thresholds, summary.kev.test_reference_tanks));
-  };
-  const minScore = Math.floor(100 * Math.min(...detections.map((r) => r.score))) / 100;
-  Object.assign($("score"), { min: minScore, value: minScore });
-  $("tile-model").addEventListener("change", tileQuery);
-  $("tile-extent").addEventListener("change", tileQuery);
-  $("tile-disagree").addEventListener("change", tileQuery);
-  $("score").addEventListener("input", scoreQuery);
-  $("kev-model").addEventListener("change", kevQuery);
-  tileQuery();
-  scoreQuery();
-  table($("kev-metrics"), kevMetrics(kev, "vision_linear", summary.kev.thresholds, summary.kev.test_reference_tanks));
-
-  const failures = selfCheck(tiles, detections, kev, summary);
-  $("status").textContent = `ArcGIS Maps SDK from js.arcgis.com/5.2.2 (core build ${kernel.fullVersion}). ` + (failures.length
-    ? `Metric self-check failed: ${failures.join(", ")}.` : "Metrics match the recorded results.");
-  $("status").classList.toggle("error", failures.length > 0);
+  $("back").addEventListener("click", () => { at -= 1; show(); });
+  $("next").addEventListener("click", () => { at += 1; show(); });
+  show();
+  $("status").textContent = "";
 }
 
 main().catch((error) => {

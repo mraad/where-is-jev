@@ -113,7 +113,8 @@ def main():
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--route-margin", type=float, default=-0.02)
     args = parser.parse_args()
-    starts(1, args.size, args.overlap)
+    if args.size < 1 or not 0 <= args.overlap < args.size:
+        parser.error("Require size >= 1 and 0 <= overlap < size")
     if args.batch_size < 1 or not math.isfinite(args.route_margin) or args.route_margin > 0:
         parser.error("batch-size must be positive and route-margin finite and <= 0")
     if args.out.exists() and any(args.out.iterdir()):
