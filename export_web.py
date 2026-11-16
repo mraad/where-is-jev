@@ -106,7 +106,6 @@ def main():
         if not path.exists():
             p.error(f"Missing input: {path}")
 
-    a.out.mkdir(parents=True, exist_ok=True)
     extent_features = read_features(a.validation / "extent.geojson")
     extent = shape(extent_features[0]["geometry"])
     report = json.loads((a.kev_pilot / "report.json").read_text())
@@ -116,10 +115,10 @@ def main():
     with rasterio.open(a.image) as src:
         if str(src.crs) != "EPSG:3857":
             raise ValueError(f"Expected an EPSG:3857 image, got {src.crs}")
-        scale = scene_jpeg(src, a.out / "scene.jpg")
         b = src.bounds
         scene = dict(xmin=b.left, ymin=b.bottom, xmax=b.right, ymax=b.top, wkid=3857,
-                     width=src.width, height=src.height, downsample=scale)
+                     width=src.width, height=src.height)
+        # Read every input before writing anything, so a bad input leaves --out empty.
         layers = {
             "tiles_512.geojson": tiles(a.tiles_gpkg),
             "detections.geojson": collection(read_features(a.validation / "predictions.geojson")),
@@ -129,16 +128,18 @@ def main():
                                json.loads((a.kev_pilot / "scores.json").read_text())),
             "kev_band.geojson": band(cuts, src, extent),
         }
-    summary = dict(
-        scene=scene,
-        tiles=run_summary(a.tiles_gpkg),
-        # Feature `status` (TP/FP, matched/FN) comes from the IoU >= 0.5 matching.
-        detections=dict(ground_truth_evaluated=validation["ground_truth_evaluated"],
-                        iou_0_50=validation["evaluations"]["iou_0.50"]),
-        kev=dict(thresholds={m: report["models"][m]["threshold"] for m in KEV_MODELS},
-                 test_reference_tanks=report["test_reference_tanks"],
-                 detection_evaluation=report["detection_evaluation"], scope=report["scope"]),
-    )
+        summary = dict(
+            scene=scene,
+            tiles=run_summary(a.tiles_gpkg),
+            # Feature `status` (TP/FP, matched/FN) comes from the IoU >= 0.5 matching.
+            detections=dict(ground_truth_evaluated=validation["ground_truth_evaluated"],
+                            iou_0_50=validation["evaluations"]["iou_0.50"]),
+            kev=dict(thresholds={m: report["models"][m]["threshold"] for m in KEV_MODELS},
+                     test_reference_tanks=report["test_reference_tanks"],
+                     detection_evaluation=report["detection_evaluation"], scope=report["scope"]),
+        )
+        a.out.mkdir(parents=True, exist_ok=True)
+        scene["downsample"] = scale = scene_jpeg(src, a.out / "scene.jpg")
     for name, data in layers.items():
         (a.out / name).write_text(json.dumps(data))
     (a.out / "summary.json").write_text(json.dumps(summary, indent=1))

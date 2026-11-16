@@ -26,6 +26,9 @@ export function detectionMetrics(rows, threshold, labels) {
   return { tp, fp: kept.length - tp, fn: labels - tp };
 }
 
+// shortcut: uses each candidate's original TP flag; if a filter drops a TP and keeps another candidate on the
+// same tank, the pilot re-matches it as TP here counted FP. Absent in pilot-v1 (selfCheck would fail); export
+// per-filter matches from kev_filter.evaluate_detections if a new run trips it.
 export function kevMetrics(rows, model, thresholds, labels) {
   const kept = rows.filter((r) => r.split === "test" && (model === "unfiltered" || r[model] >= thresholds[model]));
   const tp = kept.filter((r) => r.original_tp).length;
@@ -90,7 +93,7 @@ function kevRenderer(model, thresholds) {
 }
 
 async function main() {
-  const [Map, Extent, MediaLayer, ImageElement, ExtentAndRotationGeoreference, GeoJSONLayer, kernel] = await Promise.all([
+  const [ArcGISMap, Extent, MediaLayer, ImageElement, ExtentAndRotationGeoreference, GeoJSONLayer, kernel] = await Promise.all([
     "@arcgis/core/Map.js", "@arcgis/core/geometry/Extent.js", "@arcgis/core/layers/MediaLayer.js",
     "@arcgis/core/layers/support/ImageElement.js", "@arcgis/core/layers/support/ExtentAndRotationGeoreference.js",
     "@arcgis/core/layers/GeoJSONLayer.js", "@arcgis/core/kernel.js"].map((m) => $arcgis.import(m)));
@@ -98,12 +101,14 @@ async function main() {
     if (!r.ok) throw new Error(`data/${name}: HTTP ${r.status}. Run export_web.py first.`);
     return r.json();
   });
-  const [summary, tilesFc, detectionsFc, kevFc] = await Promise.all(
-    ["summary.json", "tiles_512.geojson", "detections.geojson", "kev.geojson"].map(load));
+  const [summary, tilesFc, detectionsFc, kevFc, truthFc] = await Promise.all(
+    ["summary.json", "tiles_512.geojson", "detections.geojson", "kev.geojson", "truth.geojson"].map(load));
   const props = (fc) => fc.features.map((f) => f.properties);
   const tiles = props(tilesFc).filter((r) => r.in_extent === 1);
   const detections = props(detectionsFc);
   const kev = props(kevFc);
+  const scoreById = new Map(detections.map((r) => [r.id, r.score]));
+  const matchedTruth = props(truthFc).filter((r) => r.status === "matched");
 
   const s = summary.scene;
   const extent = new Extent({ xmin: s.xmin, ymin: s.ymin, xmax: s.xmax, ymax: s.ymax, spatialReference: { wkid: s.wkid } });
@@ -135,7 +140,7 @@ async function main() {
     renderer: { type: "simple", label: "Spatial test band", symbol: outline(COLORS.band, 2, "dash") } });
 
   const mapEl = document.querySelector("arcgis-map");
-  mapEl.map = new Map({ layers: [scene, tileLayer, labelLayer, detectionLayer, missedLayer, kevLayer, bandLayer, extentLayer] });
+  mapEl.map = new ArcGISMap({ layers: [scene, tileLayer, labelLayer, detectionLayer, missedLayer, kevLayer, bandLayer, extentLayer] });
   mapEl.extent = extent;
   await mapEl.viewOnReady();
   if (matchMedia("(max-width: 600px)").matches) document.querySelector('arcgis-expand[slot="top-right"]').expanded = false;
@@ -157,6 +162,9 @@ async function main() {
     const t = Number($("score").value);
     $("score-out").value = t.toFixed(2);
     detectionLayer.definitionExpression = `score >= ${t}`;
+    // A cut only truncates the score-ordered matching, so a label is missed once its match falls below it.
+    const dropped = matchedTruth.filter((r) => scoreById.get(r.matched_prediction_id) < t).map((r) => r.id);
+    missedLayer.definitionExpression = dropped.length ? `status = 'FN' OR id IN (${dropped.join(",")})` : "status = 'FN'";
     table($("det-metrics"), detectionMetrics(detections, t, summary.detections.ground_truth_evaluated));
   };
   const kevQuery = () => {
