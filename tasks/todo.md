@@ -38,3 +38,12 @@ Reuse the completed Qwen 32B 512 px decisions (gc1 `results/tiles_gc1/512/qwen32
 - [x] Evaluate merged detections against `Tanks` inside `Extent` with `evaluate.py`
 - [x] GeoPackage: detections, gate tiles, evaluated predictions/labels → ArcGIS Tanks folder; verify
 - [x] Docs: README section, `CLAUDE.md`, `AGENTS.md` module list (stale)
+
+# Interactive map app (vanilla JS, ArcGIS Maps SDK 5.2.2)
+
+Plan: `~/.claude/plans/does-an-interactive-application-hidden-flask.md`. One JPEG MediaLayer, gate tiles, SAM 3 TP/FP, metrics, Kev pilot; `app/`, generated `app/data/` ignored.
+
+- [x] `export_web.py` + `test_export_web.py`
+- [x] `app/index.html`, `app/main.js`
+- [x] `.gitignore`, README, AGENTS.md
+- [x] Verify: tests, export, browser (SDK version, asserts, controls, mobile width)
