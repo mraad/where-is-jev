@@ -25,6 +25,52 @@ Gray regions are missing image data. Judge visible evidence only.
 Answer with exactly one letter: A, B, or C."""
 
 
+def file_sha256(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def worker_setup(description):
+    """Shared CLI for decide_*.py: validate inputs, then return this shard's manifest rows."""
+    p = argparse.ArgumentParser(description=description)
+    p.add_argument("--manifest", type=Path, required=True)
+    p.add_argument("--image", type=Path, required=True)
+    p.add_argument("--model", type=Path, required=True)
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--shard-index", type=int, default=0)
+    p.add_argument("--num-shards", type=int, default=1)
+    p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument("--limit", type=int, default=0)
+    a = p.parse_args()
+    if not 0 <= a.shard_index < a.num_shards or a.batch_size < 1 or a.limit < 0:
+        p.error("Invalid shard, batch size, or limit")
+    if a.out.exists() and any(a.out.iterdir()):
+        p.error("Choose a fresh output directory")
+    manifest = json.loads((a.manifest / "manifest.json").read_text())
+    # Shape alone cannot tell two exports of the same scene apart.
+    if file_sha256(a.image) != manifest["image_sha256"]:
+        p.error(f"{a.image} is not the image the manifest was prepared from")
+    rows = [f["properties"] for f in json.loads((a.manifest / "patches.geojson").read_text())["features"]]
+    rows = rows[a.shard_index::a.num_shards]
+    if a.limit and a.limit < len(rows):
+        rows = [rows[round(i*(len(rows)-1)/(a.limit-1))] for i in range(a.limit)] if a.limit > 1 else rows[:1]
+    if not rows:
+        p.error("Empty shard")
+    a.out.mkdir(parents=True, exist_ok=True)
+    return p, a, manifest, rows
+
+
+def worker_summary(a, rows, records, **details):
+    """Fields collect() compares across workers, plus runner-specific details."""
+    provenance = json.loads((a.model / "provenance.json").read_text())
+    return dict(**provenance, shard_index=a.shard_index, num_shards=a.num_shards,
+                batch_size=a.batch_size, limit=a.limit, patches=len(rows), dtype="bfloat16",
+                device="cuda", **details, prompt=QUESTION,
+                prompt_sha256=hashlib.sha256(QUESTION.encode()).hexdigest(),
+                manifest_sha256=file_sha256(a.manifest / "patches.geojson"),
+                counts=dict(Counter(r["decision"] for r in records)))
+
+
 def grid_starts(length, size=512):
     if length < 1 or size < 2 or size % 2:
         raise ValueError("Positive raster length and positive even patch size required")
@@ -45,8 +91,7 @@ def prepare(image, out, size=512):
     if out.exists() and any(out.iterdir()):
         raise ValueError("Choose a fresh output directory")
     tick = time.perf_counter()
-    with image.open("rb") as stream:
-        image_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+    image_sha = file_sha256(image)
     features, skipped, total = [], 0, 0
     with rasterio.open(image) as src:
         if src.crs is None:
@@ -96,8 +141,7 @@ def collect(manifest, shards):
         for key in ("model", "revision", "prompt_sha256", "manifest_sha256", "num_shards"):
             if s[key] != summaries[0][key]:
                 raise ValueError(f"Inconsistent worker {key}")
-    digest = hashlib.sha256((manifest / "patches.geojson").read_bytes()).hexdigest()
-    if summaries[0]["manifest_sha256"] != digest:
+    if summaries[0]["manifest_sha256"] != file_sha256(manifest / "patches.geojson"):
         raise ValueError("Workers used a different patch manifest")
     ids = [r["id"] for r in records]
     if Counter(ids) != Counter(expected):
@@ -174,7 +218,7 @@ def gate(manifest, shards, out):
     (out / "patches.geojson").write_text(json.dumps(dict(type="FeatureCollection", features=routed)))
     with rasterio.open(meta["source"]) as src:
         write_visuals(src, rows, out)
-    summary = dict(source=meta["source"], shape=meta["shape"], rgb_bands=[1, 2, 3],
+    summary = dict(source=meta["source"], image_sha256=meta["image_sha256"], shape=meta["shape"], rgb_bands=[1, 2, 3],
                    patch_size=meta["patch_size"], stride=meta["stride"], total_patches=len(features),
                    routed=len(rows), counts=dict(Counter(r["decision"] for r in rows)),
                    gate_model=summaries[0]["model"], gate_revision=summaries[0]["revision"],

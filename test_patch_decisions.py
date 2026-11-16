@@ -7,7 +7,10 @@ import tempfile
 import numpy as np
 import rasterio
 from rasterio.transform import from_origin
-from patch_decisions import collect, gate, grid_starts, prepare, LABELS
+import contextlib
+import io
+from unittest import mock
+from patch_decisions import collect, gate, grid_starts, prepare, worker_setup, LABELS
 
 
 class PatchDecisionTests(unittest.TestCase):
@@ -50,6 +53,28 @@ class PatchDecisionTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         collect(manifest, shards)
 
+
+    def test_worker_rejects_another_image_and_samples_its_shard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image, other, manifest = root / "image.tif", root / "other.tif", root / "manifest"
+            image.write_bytes(b"scene")
+            other.write_bytes(b"same size, other pixels")
+            manifest.mkdir()
+            (manifest / "manifest.json").write_text(json.dumps(dict(
+                image_sha256=hashlib.sha256(b"scene").hexdigest())))
+            (manifest / "patches.geojson").write_text(json.dumps({"features": [
+                {"properties": {"id": f"p{i}"}} for i in range(10)]}))
+            argv = ["decide", "--manifest", str(manifest), "--model", "m", "--num-shards", "2",
+                    "--shard-index", "1", "--limit", "3", "--out"]
+            with mock.patch("sys.argv", argv + [str(root / "a"), "--image", str(other)]), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                worker_setup("test")
+            self.assertFalse((root / "a").exists())
+            with mock.patch("sys.argv", argv + [str(root / "b"), "--image", str(image)]):
+                _, _, _, rows = worker_setup("test")
+            self.assertEqual([r["id"] for r in rows], ["p1", "p5", "p9"])
+            self.assertTrue((root / "b").is_dir())
 
     def test_gate_routes_only_present_tiles_in_screen_format(self):
         with tempfile.TemporaryDirectory() as tmp:

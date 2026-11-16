@@ -1,46 +1,21 @@
 """GPU-only, three-candidate scoring of RGB patches with Qwen3-VL."""
 
-import argparse
-from collections import Counter
-import hashlib
 import json
-from pathlib import Path
 import time
 
 import rasterio
 import torch
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-from patch_decisions import LABELS, QUESTION, chip
+from patch_decisions import LABELS, QUESTION, chip, worker_setup, worker_summary
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--manifest", type=Path, required=True)
-    p.add_argument("--image", type=Path, required=True)
-    p.add_argument("--model", type=Path, required=True)
-    p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--shard-index", type=int, default=0)
-    p.add_argument("--num-shards", type=int, default=1)
-    p.add_argument("--batch-size", type=int, default=16)
-    p.add_argument("--limit", type=int, default=0)
-    a = p.parse_args()
-    if not 0 <= a.shard_index < a.num_shards or a.batch_size < 1 or a.limit < 0:
-        p.error("Invalid shard, batch size, or limit")
+    p, a, manifest, rows = worker_setup(__doc__)
     if not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
         p.error("This experiment requires a BF16-capable CUDA GPU")
-    if a.out.exists() and any(a.out.iterdir()):
-        p.error("Choose a fresh output directory")
-    a.out.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(4)
     torch.manual_seed(0)
-    manifest = json.loads((a.manifest / "manifest.json").read_text())
-    rows = [f["properties"] for f in json.loads((a.manifest / "patches.geojson").read_text())["features"]]
-    rows = rows[a.shard_index::a.num_shards]
-    if a.limit and a.limit < len(rows):
-        rows = [rows[round(i*(len(rows)-1)/(a.limit-1))] for i in range(a.limit)] if a.limit > 1 else rows[:1]
-    if not rows:
-        p.error("Empty shard")
     tick = time.perf_counter()
     model = Qwen3VLForConditionalGeneration.from_pretrained(
         a.model, local_files_only=True, dtype=torch.bfloat16, attn_implementation="sdpa").to("cuda").eval()
@@ -55,8 +30,6 @@ def main():
     records, gpu_seconds = [], 0.
     start = time.perf_counter()
     with rasterio.open(a.image) as src, (a.out / "decisions.jsonl").open("x") as output:
-        if [src.height, src.width] != manifest["shape"]:
-            raise ValueError("Source dimensions differ from manifest")
         for offset in range(0, len(rows), a.batch_size):
             batch = rows[offset:offset+a.batch_size]
             messages = [[{"role": "user", "content": [
@@ -83,16 +56,11 @@ def main():
             output.flush()
             print(f"shard={a.shard_index} processed={len(records)}/{len(rows)}", flush=True)
             del inputs, logits
-    provenance = json.loads((a.model / "provenance.json").read_text())
-    summary = dict(**provenance, shard_index=a.shard_index, num_shards=a.num_shards,
-                   batch_size=a.batch_size, limit=a.limit, patches=len(rows), dtype="bfloat16",
-                   device="cuda", gpu_name=torch.cuda.get_device_name(),
-                   peak_gpu_memory_bytes=torch.cuda.max_memory_allocated(), load_seconds=load_seconds,
-                   pipeline_seconds=time.perf_counter()-start, gpu_forward_seconds=gpu_seconds,
-                   prompt=QUESTION, prompt_sha256=hashlib.sha256(QUESTION.encode()).hexdigest(),
-                   manifest_sha256=hashlib.sha256((a.manifest / "patches.geojson").read_bytes()).hexdigest(),
-                   counts=dict(Counter(r["decision"] for r in records)),
-                   scoring="One forward pass; A/B/C next-token logits; relative weights are not calibrated probabilities")
+    summary = worker_summary(
+        a, rows, records, gpu_name=torch.cuda.get_device_name(),
+        peak_gpu_memory_bytes=torch.cuda.max_memory_allocated(), load_seconds=load_seconds,
+        pipeline_seconds=time.perf_counter()-start, gpu_forward_seconds=gpu_seconds,
+        scoring="One forward pass; A/B/C next-token logits; relative weights are not calibrated probabilities")
     (a.out / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps({k: v for k, v in summary.items() if k != "prompt"}, indent=2))
 
