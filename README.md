@@ -4,14 +4,18 @@
 
 A supervised pilot on gc5 compared a linear classifier on frozen image features
 with image-capable Kev-0.8B, before and after tuning only its decision head.
-On a spatially held-out region with 71 candidates and 13 labeled tanks:
+On a spatially held-out region with 71 candidates and 12 scored labeled tanks:
 
 | Filter | TP / FP / FN | Precision | Recall |
 |---|---|---:|---:|
-| No filter | 11 / 60 / 2 | 15.5% | 84.6% |
-| Linear image classifier | 11 / 6 / 2 | **64.7%** | 84.6% |
-| Image-Kev, untuned | 11 / 38 / 2 | 22.4% | 84.6% |
-| Image-Kev, tuned head | 11 / 35 / 2 | 23.9% | 84.6% |
+| No filter | 11 / 60 / 1 | 15.5% | 91.7% |
+| Linear image classifier | 11 / 6 / 1 | **64.7%** | 91.7% |
+| Image-Kev, untuned | 11 / 38 / 1 | 22.4% | 91.7% |
+| Image-Kev, tuned head | 11 / 35 / 1 | 23.9% | 91.7% |
+
+Recall was first reported as 84.6% (FN 2 of 13); that counted a tank as
+missed although its correct detection was excluded at a split boundary.
+See the [corrected table](experiments/README.md#held-out-results).
 
 The linear classifier removed 54 of 60 false positives while preserving all
 11 correctly detected tanks. Kev head tuning removed three additional false

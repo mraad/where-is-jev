@@ -48,17 +48,28 @@ hyperparameters were fixed before reading test scores; there was no search.
 
 ## Held-out results
 
-The test band has 13 reference tanks and 71 eligible candidate crops.
+The test band has 71 eligible candidate crops and 12 scored reference tanks.
 Matching uses the existing evaluator: one-to-one, original SAM confidence
 order, polygon IoU ≥ 0.50. Reference tanks in the test band remain in the
-denominator even when no eligible crop covers them.
+denominator when no candidate covers them. A tank whose only matching
+candidate crosses a split boundary (a "buffer" crop) is excluded instead:
+it was found, but no filter can be scored on it. This removes OBJECTID 81,
+which candidate 7 matches at IoU ≥ 0.50.
 
 | Filter | TP | FP | FN | Precision | Recall | F1 |
 |---|---:|---:|---:|---:|---:|---:|
-| None | 11 | 60 | 2 | 15.5% | 84.6% | 26.2% |
-| Linear vision classifier | 11 | 6 | 2 | 64.7% | 84.6% | 73.3% |
-| Image-Kev, untuned | 11 | 38 | 2 | 22.4% | 84.6% | 35.5% |
-| Image-Kev, tuned head | 11 | 35 | 2 | 23.9% | 84.6% | 37.3% |
+| None | 11 | 60 | 1 | 15.5% | 91.7% | 26.5% |
+| Linear vision classifier | 11 | 6 | 1 | 64.7% | 91.7% | 75.9% |
+| Image-Kev, untuned | 11 | 38 | 1 | 22.4% | 91.7% | 36.1% |
+| Image-Kev, tuned head | 11 | 35 | 1 | 23.9% | 91.7% | 37.9% |
+
+Recomputed on 2026-11-16 from the pilot-v1 scores with the corrected
+`evaluate_detections` (no model re-run): `results/kev_filter_pilot/pilot-v1-recount/`.
+Thresholds, candidate counts, precision and AUC are unchanged.
+
+Superseded (pilot-v1 as first reported): 13 reference tanks, FN 2 and recall
+84.6% for every filter (F1 26.2%, 73.3%, 35.5%, 37.3%). That count included
+OBJECTID 81 as missed although its correct detection was in the buffer.
 
 All filters retained the 11 existing true positives. Head tuning gave a small
 improvement over untuned Kev, but the linear probe removed substantially more

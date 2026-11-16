@@ -29,6 +29,12 @@ def partition(left, right, cuts):
     return "buffer"
 
 
+def exclude_buffered(truth, records):
+    """Drop labels matched by a buffer candidate: such a tank can be found, but never scored."""
+    buffered = {r["matched_truth_id"] for r in records if r["split"] == "buffer" and r["matched_truth_id"] is not None}
+    return [r for r in truth if r["id"] not in buffered], sorted(buffered & {r["id"] for r in truth})
+
+
 def select_threshold(scores, positive, minimum_recall=.95):
     """Choose the strictest threshold retaining >=95% calibration positives."""
     scores, positive = np.asarray(scores), np.asarray(positive, dtype=bool)
@@ -166,7 +172,8 @@ def evaluate_detections(inputs, image, gdb, out):
 
     report = json.loads((out / "report.json").read_text())
     scores = json.loads((out / "scores.json").read_text())
-    cuts = json.loads((out / "records.json").read_text())["cuts"]
+    records = json.loads((out / "records.json").read_text())
+    cuts = records["cuts"]
     reference, crs = read_layer(gdb, "Tanks")
     extents, extent_crs = read_layer(gdb, "Extent")
     extent = unary_union([project(g, extent_crs, crs) for _, g in extents])
@@ -176,6 +183,7 @@ def evaluate_detections(inputs, image, gdb, out):
         test_truth = [r for r in truth if cuts[2] <= (
             inverse * project(next(g for i, g in reference if i == r["id"]).centroid,
                               crs, src.crs).coords[0])[0] <= cuts[3]]
+    test_truth, excluded = exclude_buffered(test_truth, records["records"])
     predictions = json.loads((inputs / "candidate/evaluation-retry/predictions.geojson").read_text())["features"]
     by_id = {f["properties"]["id"]: dict(f["properties"],
              geometry=project(shape(f["geometry"]), "EPSG:4326", crs)) for f in predictions}
@@ -188,9 +196,9 @@ def evaluate_detections(inputs, image, gdb, out):
         metrics[name] = {k: v for k, v in result.items() if k != "matches"}
     report["detection_evaluation"] = metrics
     report["test_reference_tanks"] = len(test_truth)
+    report["test_labels_excluded_buffer_candidate"] = excluded
     report["training_examples"] = sum(r["split"] == "train" and r["label"] >= 0 for r in scores)
-    report["buffer_excluded"] = sum(r["split"] == "buffer" for r in
-        json.loads((out / "records.json").read_text())["records"])
+    report["buffer_excluded"] = sum(r["split"] == "buffer" for r in records["records"])
     # A geometric overlap can connect separate crops to the same reference object.
     owners = {}
     all_truth = [dict(id=i, geometry=g) for i,g in reference]
