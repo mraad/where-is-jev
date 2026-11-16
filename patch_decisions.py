@@ -65,7 +65,7 @@ def worker_summary(a, rows, records, **details):
     provenance = json.loads((a.model / "provenance.json").read_text())
     return dict(**provenance, shard_index=a.shard_index, num_shards=a.num_shards,
                 batch_size=a.batch_size, limit=a.limit, patches=len(rows), dtype="bfloat16",
-                device="cuda", **details, prompt=QUESTION,
+                device="cuda", image_sha256=file_sha256(a.image), **details, prompt=QUESTION,
                 prompt_sha256=hashlib.sha256(QUESTION.encode()).hexdigest(),
                 manifest_sha256=file_sha256(a.manifest / "patches.geojson"),
                 counts=dict(Counter(r["decision"] for r in records)))
@@ -143,6 +143,10 @@ def collect(manifest, shards):
                 raise ValueError(f"Inconsistent worker {key}")
     if summaries[0]["manifest_sha256"] != file_sha256(manifest / "patches.geojson"):
         raise ValueError("Workers used a different patch manifest")
+    # Same grid and mask give the same patches.geojson for different pixels; runs before 2026-11-16 lack the digest.
+    digests = {s["image_sha256"] for s in summaries if "image_sha256" in s}
+    if digests and digests != {json.loads((manifest / "manifest.json").read_text())["image_sha256"]}:
+        raise ValueError("Workers read a different image than the manifest")
     ids = [r["id"] for r in records]
     if Counter(ids) != Counter(expected):
         raise ValueError("Missing, duplicated, or unexpected patch decisions")

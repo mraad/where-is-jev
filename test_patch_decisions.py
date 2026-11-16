@@ -47,6 +47,13 @@ class PatchDecisionTests(unittest.TestCase):
             output = worker / "decisions.jsonl"
             output.write_text("\n".join(map(json.dumps, good)))
             self.assertEqual(len(collect(manifest, shards)[1]), 2)
+            (manifest / "manifest.json").write_text(json.dumps(dict(image_sha256="a")))
+            summary = json.loads((worker / "summary.json").read_text())
+            (worker / "summary.json").write_text(json.dumps(dict(summary, image_sha256="b")))
+            with self.assertRaises(ValueError):
+                collect(manifest, shards)
+            (worker / "summary.json").write_text(json.dumps(dict(summary, image_sha256="a")))
+            self.assertEqual(len(collect(manifest, shards)[1]), 2)
             for bad in [good[:1], good+[good[0]], [good[0], dict(id="p1", decision="unknown")]]:
                 with self.subTest(bad=bad):
                     output.write_text("\n".join(map(json.dumps, bad)))
