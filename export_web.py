@@ -102,7 +102,8 @@ def main():
         # Read every input before writing anything, so a bad input leaves --out empty.
         tile_layer = tiles(a.tiles_gpkg)
         detections = read_features(a.validation / "predictions.geojson")
-        check_gate(tile_layer["features"], detections, a.gate)
+        # Check every detection of the run, not only the ones evaluate.py kept inside the extent.
+        check_gate(tile_layer["features"], read_features(validation["detections"]), a.gate)
         layers = {
             "tiles_512.geojson": tile_layer,
             "detections.geojson": collection(detections),

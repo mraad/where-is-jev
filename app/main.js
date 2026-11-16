@@ -60,7 +60,7 @@ async function main() {
   const tileCounts = JSON.parse(gate.all_tile_counts);
   const { tp, fp, fn } = summary.detections.iou_0_50;
   const n = { labels: summary.detections.ground_truth_evaluated, model: gate.checkpoint.split("/").pop(), tiles: gate.tiles,
-    complete: tileCounts[LABELS[0]], partial: tileCounts[LABELS[1]], skipped: tileCounts[LABELS[2]],
+    complete: tileCounts[LABELS[0]] ?? 0, partial: tileCounts[LABELS[1]] ?? 0, skipped: tileCounts[LABELS[2]] ?? 0,
     detections: tp + fp, tp, fp, fn, recall: pct(tp / (tp + fn)), precision: pct(tp / (tp + fp)) };
 
   const s = summary.scene;
