@@ -29,9 +29,11 @@ def partition(left, right, cuts):
     return "buffer"
 
 
-def exclude_buffered(truth, records):
-    """Drop labels matched by a buffer candidate: such a tank can be found, but never scored."""
+def exclude_buffered(truth, records, matchable=()):
+    """Drop labels matched by a buffer candidate that no eligible candidate can match (IoU >= 0.5):
+    such a tank was found, but no filter can be scored on it."""
     buffered = {r["matched_truth_id"] for r in records if r["split"] == "buffer" and r["matched_truth_id"] is not None}
+    buffered -= set(matchable)
     return [r for r in truth if r["id"] not in buffered], sorted(buffered & {r["id"] for r in truth})
 
 
@@ -183,11 +185,13 @@ def evaluate_detections(inputs, image, gdb, out):
         test_truth = [r for r in truth if cuts[2] <= (
             inverse * project(next(g for i, g in reference if i == r["id"]).centroid,
                               crs, src.crs).coords[0])[0] <= cuts[3]]
-    test_truth, excluded = exclude_buffered(test_truth, records["records"])
     predictions = json.loads((inputs / "candidate/evaluation-retry/predictions.geojson").read_text())["features"]
     by_id = {f["properties"]["id"]: dict(f["properties"],
              geometry=project(shape(f["geometry"]), "EPSG:4326", crs)) for f in predictions}
     selected = [r for r in scores if r["split"] == "test"]
+    eligible = [by_id[r["id"]] for r in selected]
+    matchable = {test_truth[p["truth_index"]]["id"] for p in overlap_pairs(eligible, test_truth) if p["iou"] >= .5}
+    test_truth, excluded = exclude_buffered(test_truth, records["records"], matchable)
     metrics = {}
     for name in ["unfiltered", *report["models"]]:
         threshold = report["models"][name]["threshold"] if name != "unfiltered" else None

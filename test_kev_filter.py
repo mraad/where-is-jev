@@ -20,5 +20,11 @@ class FilterTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in kept], [83, 90])
         self.assertEqual(excluded, [81])
 
+    def test_label_an_eligible_candidate_can_match_stays_scored(self):
+        truth = [dict(id=81)]
+        records = [dict(split="buffer", matched_truth_id=81), dict(split="test", matched_truth_id=None)]
+        kept, excluded = exclude_buffered(truth, records, matchable={81})
+        self.assertEqual(([r["id"] for r in kept], excluded), ([81], []))
+
 if __name__=="__main__":
     unittest.main()

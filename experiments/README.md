@@ -52,8 +52,9 @@ The test band has 71 eligible candidate crops and 12 scored reference tanks.
 Matching uses the existing evaluator: one-to-one, original SAM confidence
 order, polygon IoU ≥ 0.50. Reference tanks in the test band remain in the
 denominator when no candidate covers them. A tank whose only matching
-candidate crosses a split boundary (a "buffer" crop) is excluded instead:
-it was found, but no filter can be scored on it. This removes OBJECTID 81,
+candidate crosses a split boundary (a "buffer" crop), and that no eligible
+test candidate matches at IoU ≥ 0.50, is excluded instead: it was found, but
+no filter can be scored on it. This removes OBJECTID 81,
 which candidate 7 matches at IoU ≥ 0.50.
 
 | Filter | TP | FP | FN | Precision | Recall | F1 |
