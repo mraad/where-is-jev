@@ -116,9 +116,9 @@ def main():
     starts(1, args.size, args.overlap)
     if args.batch_size < 1 or not math.isfinite(args.route_margin) or args.route_margin > 0:
         parser.error("batch-size must be positive and route-margin finite and <= 0")
-    args.out.mkdir(parents=True, exist_ok=True)
-    if (args.out / "patches.csv").exists():
+    if args.out.exists() and any(args.out.iterdir()):
         parser.error("Output already exists; choose a new --out directory")
+    args.out.mkdir(parents=True, exist_ok=True)
 
     import open_clip
     import torch

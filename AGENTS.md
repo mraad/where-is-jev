@@ -12,6 +12,7 @@ This repository is a Python experiment for detecting storage tanks in overhead i
 - `merge_shards.py`: coverage validation and global duplicate suppression.
 - `evaluate.py`: polygon matching against FileGDB ground truth within the sample extent.
 - `to_gpkg.py`: combines GeoJSON outputs into one GeoPackage for ArcGIS Pro.
+- `export_web.py`: writes `app/data/` (scene JPEG, GeoJSON layers, recorded metrics) for the interactive map; `app/`: vanilla JS map on ArcGIS Maps SDK 5.2.2.
 - `figures.py`: renders `docs/images/` from a finished gate, merge and evaluation; `docs/index.html`: plain-HTML project overview.
 - `jev_probe.py`: separate MLX/Jev diagnostic; `summarize.py`: local experiment summaries.
 - `test_*.py`: standard-library unit tests beside the modules.

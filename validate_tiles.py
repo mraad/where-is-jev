@@ -2,7 +2,6 @@
 
 import argparse
 from collections import Counter
-import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -16,7 +15,7 @@ import shapely
 
 from compare_backbones import metrics
 from evaluate import project, read_layer
-from patch_decisions import LABELS, collect
+from patch_decisions import LABELS, collect, file_sha256
 
 MODELS = ("qwen4b", "qwen32b", "nemotron12b", "nemotron30b")
 OUTSIDE = "Not evaluated (outside extent)"
@@ -45,8 +44,7 @@ def main():
     a = p.parse_args()
     if a.out.exists() and any(a.out.iterdir()):
         p.error("Choose a fresh output directory")
-    with a.image.open("rb") as stream:
-        image_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+    image_sha = file_sha256(a.image)
     with rasterio.open(a.image) as src:
         crs, transform, shape = src.crs, src.transform, [src.height, src.width]
     tanks, tanks_crs = read_layer(a.gdb, "Tanks")

@@ -18,6 +18,7 @@ from rasterio.windows import Window
 from transformers import Sam3Model, Sam3Processor
 
 from merge_shards import suppress
+from patch_decisions import file_sha256
 from screen import read_rgb
 
 
@@ -70,6 +71,9 @@ def main():
     meta = json.loads((args.screen / "summary.json").read_text())
     if args.image:
         meta["source"] = str(args.image.resolve())
+    # Gate folders record the manifest's image hash; RemoteCLIP screen folders predate it.
+    if "image_sha256" in meta and file_sha256(meta["source"]) != meta["image_sha256"]:
+        parser.error(f'{meta["source"]} is not the image the gate was prepared from')
     with (args.screen / "patches.csv").open() as f:
         rows = [r for r in csv.DictReader(f) if r["status"] == "scored"]
     for r in rows:

@@ -227,18 +227,21 @@ def main():
         summary["matched_iou_median_at_0_50"] = median(p["iou"] for p in primary)
     matched_pred = {p["prediction_index"]: p for p in primary}
     matched_gt = {p["truth_index"]: p for p in primary}
+    best_pred, best_gt = {}, {}
+    for v in pairs:
+        best_pred[v["prediction_index"]] = max(best_pred.get(v["prediction_index"], 0), v["iou"])
+        best_gt[v["truth_index"]] = max(best_gt.get(v["truth_index"], 0), v["iou"])
     for pi, p in enumerate(predictions):
         m = matched_pred.get(pi)
         p.update(status="TP" if m else "FP" if extent is not None else "unmatched_unscored",
                  matched_truth_id=truth[m["truth_index"]]["id"] if m else None,
                  matched_iou=m["iou"] if m else None,
-                 best_iou=max((v["iou"] for v in pairs if v["prediction_index"] == pi), default=0))
+                 best_iou=best_pred.get(pi, 0))
     for gi, g in enumerate(truth):
         m = matched_gt.get(gi)
         g.update(status="matched" if m else "FN",
                  matched_prediction_id=predictions[m["prediction_index"]]["id"] if m else None,
-                 best_iou=max((v["iou"] for v in pairs if v["truth_index"] == gi), default=0),
-                 any_overlap=any(v["truth_index"] == gi for v in pairs))
+                 best_iou=best_gt.get(gi, 0), any_overlap=gi in best_gt)
     summary["labels_with_no_overlap"] = [g["id"] for g in truth if not g["any_overlap"]]
     summary["labels_missed_at_iou_0_50"] = [g["id"] for g in truth if g["status"] == "FN"]
     summary["unmatched_at_iou_0_50"] = dict(

@@ -7,7 +7,10 @@ import tempfile
 import numpy as np
 import rasterio
 from rasterio.transform import from_origin
-from patch_decisions import collect, gate, grid_starts, prepare, LABELS
+import contextlib
+import io
+from unittest import mock
+from patch_decisions import collect, gate, grid_starts, prepare, worker_setup, LABELS
 
 
 class PatchDecisionTests(unittest.TestCase):
@@ -44,12 +47,41 @@ class PatchDecisionTests(unittest.TestCase):
             output = worker / "decisions.jsonl"
             output.write_text("\n".join(map(json.dumps, good)))
             self.assertEqual(len(collect(manifest, shards)[1]), 2)
+            (manifest / "manifest.json").write_text(json.dumps(dict(image_sha256="a")))
+            summary = json.loads((worker / "summary.json").read_text())
+            (worker / "summary.json").write_text(json.dumps(dict(summary, image_sha256="b")))
+            with self.assertRaises(ValueError):
+                collect(manifest, shards)
+            (worker / "summary.json").write_text(json.dumps(dict(summary, image_sha256="a")))
+            self.assertEqual(len(collect(manifest, shards)[1]), 2)
             for bad in [good[:1], good+[good[0]], [good[0], dict(id="p1", decision="unknown")]]:
                 with self.subTest(bad=bad):
                     output.write_text("\n".join(map(json.dumps, bad)))
                     with self.assertRaises(ValueError):
                         collect(manifest, shards)
 
+
+    def test_worker_rejects_another_image_and_samples_its_shard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image, other, manifest = root / "image.tif", root / "other.tif", root / "manifest"
+            image.write_bytes(b"scene")
+            other.write_bytes(b"same size, other pixels")
+            manifest.mkdir()
+            (manifest / "manifest.json").write_text(json.dumps(dict(
+                image_sha256=hashlib.sha256(b"scene").hexdigest())))
+            (manifest / "patches.geojson").write_text(json.dumps({"features": [
+                {"properties": {"id": f"p{i}"}} for i in range(10)]}))
+            argv = ["decide", "--manifest", str(manifest), "--model", "m", "--num-shards", "2",
+                    "--shard-index", "1", "--limit", "3", "--out"]
+            with mock.patch("sys.argv", argv + [str(root / "a"), "--image", str(other)]), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                worker_setup("test")
+            self.assertFalse((root / "a").exists())
+            with mock.patch("sys.argv", argv + [str(root / "b"), "--image", str(image)]):
+                _, _, _, rows = worker_setup("test")
+            self.assertEqual([r["id"] for r in rows], ["p1", "p5", "p9"])
+            self.assertTrue((root / "b").is_dir())
 
     def test_gate_routes_only_present_tiles_in_screen_format(self):
         with tempfile.TemporaryDirectory() as tmp:

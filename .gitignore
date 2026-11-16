@@ -4,3 +4,4 @@ __pycache__/
 checkpoints/
 results/
 .DS_Store
+app/data/

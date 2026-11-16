@@ -175,7 +175,7 @@ Answer with exactly one letter: A, B, or C.</pre>
 <h2>Can a small classifier remove false alarms?</h2>
 <p>A new supervised experiment starts after SAM 3 has found candidate shapes. It gives a classifier a crop around each candidate and asks whether the central object is a storage tank. This filter aims to reduce the number of false alarms a person needs to inspect.</p>
 <p>We compared a simple linear classifier using frozen image features with Kev-0.8B connected to its original vision encoder. Kev was measured both as supplied and after training only its small decision head. Its vision encoder, language model, and adapter were kept frozen.</p>
-<p>The pilot used 100 clear training examples, a separate calibration region to choose acceptance thresholds, and a test region containing 71 candidate crops and 13 reference tanks. Crops crossing the geographic split boundaries were excluded. No reference tank overlapped candidate polygons in multiple partitions.</p>
+<p>The pilot used 100 clear training examples, a separate calibration region to choose acceptance thresholds, and a test region containing 71 candidate crops and 12 scored reference tanks. Crops crossing the geographic split boundaries were excluded, and so was one reference tank whose only correct detection was such a crop. No reference tank overlapped candidate polygons in multiple partitions.</p>
 <div class="table-wrap table"><table>
 <caption style="text-align:left;margin-bottom:12px">Candidate-filter pilot: spatial test region only</caption>
 <thead><tr><th scope="col">Filter</th><th scope="col">Correct detections</th><th scope="col">False alarms</th><th scope="col">Precision</th></tr></thead>
@@ -185,7 +185,7 @@ Answer with exactly one letter: A, B, or C.</pre>
 <tr><td>Image-Kev, untuned</td><td>11</td><td>38</td><td>22.4%</td></tr>
 <tr><td>Image-Kev, tuned head</td><td>11</td><td>35</td><td>23.9%</td></tr>
 </tbody></table></div>
-<p><strong>The simpler classifier performed best in this pilot.</strong> It removed 54 of 60 false alarms while retaining all 11 correctly detected tanks. All methods still missed two of the 13 reference tanks, giving the same recall of 84.6%. Kev head training improved its result modestly, removing three additional false alarms.</p>
+<p><strong>The simpler classifier performed best in this pilot.</strong> It removed 54 of 60 false alarms while retaining all 11 correctly detected tanks. All methods still missed one of the 12 scored reference tanks, giving the same recall of 91.7% (first reported as 84.6%, before a boundary tank was correctly excluded). Kev head training improved its result modestly, removing three additional false alarms.</p>
 <p class="note">These numbers describe a small test region, not the full-image result shown elsewhere on this page. Labels were derived from reference geometry without an independent human review. The same scene supplies training and evaluation, so this does not establish performance at another location. The next step is to validate the linear classifier on independent imagery; no production filter has been enabled.</p>
 <p><a href="../experiments/README.md">Implementation, reproduction instructions, and experiment evidence</a>.</p>
 </section>

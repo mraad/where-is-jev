@@ -4,14 +4,18 @@
 
 A supervised pilot on gc5 compared a linear classifier on frozen image features
 with image-capable Kev-0.8B, before and after tuning only its decision head.
-On a spatially held-out region with 71 candidates and 13 labeled tanks:
+On a spatially held-out region with 71 candidates and 12 scored labeled tanks:
 
 | Filter | TP / FP / FN | Precision | Recall |
 |---|---|---:|---:|
-| No filter | 11 / 60 / 2 | 15.5% | 84.6% |
-| Linear image classifier | 11 / 6 / 2 | **64.7%** | 84.6% |
-| Image-Kev, untuned | 11 / 38 / 2 | 22.4% | 84.6% |
-| Image-Kev, tuned head | 11 / 35 / 2 | 23.9% | 84.6% |
+| No filter | 11 / 60 / 1 | 15.5% | 91.7% |
+| Linear image classifier | 11 / 6 / 1 | **64.7%** | 91.7% |
+| Image-Kev, untuned | 11 / 38 / 1 | 22.4% | 91.7% |
+| Image-Kev, tuned head | 11 / 35 / 1 | 23.9% | 91.7% |
+
+Recall was first reported as 84.6% (FN 2 of 13); that counted a tank as
+missed although its correct detection was excluded at a split boundary.
+See the [corrected table](experiments/README.md#held-out-results).
 
 The linear classifier removed 54 of 60 false positives while preserving all
 11 correctly detected tanks. Kev head tuning removed three additional false
@@ -25,6 +29,38 @@ is enabled. The original pipeline remains a training-free baseline.
 
 See [implementation, data contract, reproduction and evidence](experiments/README.md).
 
+
+## Interactive map (`app/`)
+
+`app/` is a vanilla JavaScript map on ArcGIS Maps SDK for JavaScript 5.2.2
+(loaded from `https://js.arcgis.com/5.2.2/`; that release's core reports build
+5.2.1). It needs no API key and no basemap. It shows:
+
+- the 512 px gate tiles from `Tanks.tif`, colored by one model's decision or the
+  reference label, with an option to show only disagreements;
+- the SAM 3 "round storage tanks" detections after the Qwen3-VL 32B gate,
+  TP/FP at IoU >= 0.5, missed labels, and a minimum-score slider;
+- the Kev filter pilot candidates in the spatial test band, kept or dropped by
+  each filter's recorded threshold.
+
+The side panel recomputes the metrics in the browser. On load it checks them
+against `summary.json`, which holds the recorded Python results, and reports a
+mismatch. Score-slider counts are exact because matching assigns labels in
+descending score order, so a score cut only truncates it. Tile metrics are
+patch-level presence on the 513 tiles of the multi-size grid wholly inside the
+extent, not the 144-patch comparison above.
+
+`app/data/` is generated and ignored, because it holds imagery derived from the
+source TIFF:
+
+```bash
+.venv/bin/python export_web.py --image ~/Documents/ArcGIS/Projects/Tanks/Tanks.tif \
+  --tiles-gpkg results/tiles_validation/tank_tiles_validation.gpkg --out app/data
+python3 -m http.server -d app 8000   # open http://localhost:8000
+```
+
+The JPEG is downsampled 2x (1 m pixels, 3.5 MB) because full resolution exceeds
+the 15 MB limit in `export_web.py`.
 
 ## Project overview and baseline validation
 

@@ -13,7 +13,9 @@ from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
 from rasterio.windows import Window
 
-from detect import process_patch
+from unittest import mock
+
+from detect import main, process_patch
 
 
 class PatchOutputTests(unittest.TestCase):
@@ -42,6 +44,21 @@ class PatchOutputTests(unittest.TestCase):
             ring = objects[0]["geometry"]["coordinates"][0][0]
             np.testing.assert_allclose([min(p[0] for p in ring), max(p[1] for p in ring)],
                                        [38.013, 23.979])
+
+
+class GateImageTests(unittest.TestCase):
+    def test_gate_from_another_image_is_rejected_before_model_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "image.tif").write_bytes(b"other pixels")
+            (root / "screen").mkdir()
+            (root / "screen" / "summary.json").write_text(json.dumps(dict(
+                source=str(root / "image.tif"), image_sha256="0" * 64, shape=[1, 1])))
+            argv = ["detect", "--screen", str(root / "screen"), "--all-valid", "--out", str(root / "out")]
+            with mock.patch("sys.argv", argv), mock.patch("detect.Sam3Model") as model, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main()
+            model.from_pretrained.assert_not_called()
 
 
 if __name__ == "__main__":
