@@ -65,8 +65,16 @@ source TIFF:
 python3 -m http.server -d app 8000   # open http://localhost:8000
 ```
 
+Stop the server with Ctrl+C. The page needs internet access to load the SDK
+from `js.arcgis.com`.
+
 The JPEG is downsampled 2x (1 m pixels, 3.5 MB) because full resolution exceeds
 the 15 MB limit in `export_web.py`.
+
+A plain-language walkthrough of the four steps, with one screenshot per step
+and how to read the counts:
+[Tank Map Walkthrough](https://claude.ai/artifact/1B4Ftjgru2sn4U31jnQmFY)
+(private Artifact; owner access required).
 
 ## Project overview and baseline validation
 
