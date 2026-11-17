@@ -264,9 +264,11 @@ Answer with exactly one letter: A, B, or C.</pre>
   <tr><td><code>validate_tiles.py</code></td><td>Scores tile decisions against reference values from the labels</td></tr>
   <tr><td><code>to_gpkg.py</code></td><td>Writes GeoJSON layers to one GeoPackage</td></tr>
   <tr><td><code>figures.py</code></td><td>Makes the figures in this document</td></tr>
+  <tr><td><code>export_web.py</code>, <code>app/</code></td><td>Make the data for the web map and show it in four steps</td></tr>
   <tr><td><code>run_tiles.sh</code>, <code>run_gc1.sh</code></td><td>Start one worker for each GPU</td></tr>
 </table></div>
 <p><a href="../README.md">README.md</a> is the experiment log. It gives all runs, values and limits.</p>
+<p>The web map in <code>app/</code> shows the featured run in four steps. To open it, run <code>python3 -m http.server -d app 8000</code> in the project folder. Then go to <code>http://localhost:8000</code>. The README tells how to make <code>app/data/</code>. The <a href="https://claude.ai/artifact/1B4Ftjgru2sn4U31jnQmFY">Tank Map Walkthrough</a> tells what each step shows (private Artifact; owner access required).</p>
 
 <h2 id="terms">11. Terms</h2>
 <div class="table"><table>
